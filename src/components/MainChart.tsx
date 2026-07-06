@@ -1,0 +1,308 @@
+import { useEffect, useRef } from 'react';
+import Highcharts, { ORION, applyOrionTheme } from '../charts/orionTheme';
+import {
+  getSeries, getSignals, pairBySymbol, fmtDateTime,
+  type AISignal,
+} from '../data/market';
+
+applyOrionTheme();
+
+export type ChartKind = 'candlestick' | 'ohlc' | 'line' | 'area';
+
+interface Props {
+  symbol: string;
+  tf: string;
+  kind: ChartKind;
+  showSignals: boolean;
+  showEMA: boolean;
+  showRSI: boolean;
+  activeSignal: AISignal | null;
+}
+
+export default function MainChart({
+  symbol, tf, kind, showSignals, showEMA, showRSI, activeSignal,
+}: Props) {
+  const ref = useRef<HTMLDivElement>(null);
+  const chartRef = useRef<Highcharts.Chart | null>(null);
+
+  useEffect(() => {
+    if (!ref.current) return;
+
+    const pair = pairBySymbol(symbol);
+    const { candles, volume } = getSeries(symbol, tf);
+    const signals = getSignals(symbol, tf);
+    const last = candles[candles.length - 1];
+    const lastUp = last[4] >= last[1];
+    const stepMs = candles[1][0] - candles[0][0];
+
+    // el volumen hereda la dirección de su vela
+    const volumeData = volume.map(([t, v], i) => ({
+      x: t,
+      y: v,
+      color: candles[i][4] >= candles[i][1]
+        ? 'rgba(43, 171, 99, 0.35)'
+        : 'rgba(229, 72, 77, 0.35)',
+    }));
+
+    const flagPoints = (dir: 'buy' | 'sell') =>
+      signals
+        .filter((s) => s.direction === dir)
+        .map((s) => ({
+          x: s.time,
+          title: dir === 'buy' ? '▲' : '▼',
+          text: `<b>${s.pattern}</b><br/>Confianza ${s.confidence}% · ${fmtDateTime(s.time)}`,
+        }));
+
+    const priceHeight = showRSI ? '56%' : '78%';
+    const volTop = showRSI ? '58%' : '80%';
+
+    const signalPlotLines: Highcharts.YAxisPlotLinesOptions[] = activeSignal
+      ? [
+          {
+            value: activeSignal.entry, color: ORION.star, width: 1, dashStyle: 'Dash', zIndex: 4,
+            label: { text: 'ENTRADA', align: 'left', x: 8, style: { color: ORION.star, fontSize: '9px', fontFamily: ORION.fontData } },
+          },
+          {
+            value: activeSignal.stop, color: ORION.sell, width: 1, dashStyle: 'Dot', zIndex: 4,
+            label: { text: 'SL', align: 'left', x: 8, style: { color: ORION.sellInk, fontSize: '9px', fontFamily: ORION.fontData } },
+          },
+          {
+            value: activeSignal.target, color: ORION.buy, width: 1, dashStyle: 'Dot', zIndex: 4,
+            label: { text: 'TP', align: 'left', x: 8, style: { color: ORION.buyInk, fontSize: '9px', fontFamily: ORION.fontData } },
+          },
+        ]
+      : [];
+
+    const priceSeries: Highcharts.SeriesOptionsType =
+      kind === 'candlestick' || kind === 'ohlc'
+        ? {
+            type: kind,
+            id: 'price',
+            name: symbol,
+            data: candles,
+            color: ORION.sell,
+            upColor: ORION.buy,
+            lineColor: ORION.sell,
+            upLineColor: ORION.buy,
+            showInLegend: false,
+          }
+        : {
+            type: kind,
+            id: 'price',
+            name: symbol,
+            data: candles.map((c) => [c[0], c[4]]),
+            color: ORION.series1,
+            lineWidth: 1.6,
+            showInLegend: false,
+            ...(kind === 'area' && {
+              fillColor: {
+                linearGradient: { x1: 0, y1: 0, x2: 0, y2: 1 },
+                stops: [
+                  [0, 'rgba(43, 159, 216, 0.22)'],
+                  [1, 'rgba(43, 159, 216, 0)'],
+                ] as [number, string][],
+              },
+            }),
+          };
+
+    const series: Highcharts.SeriesOptionsType[] = [
+      priceSeries,
+      {
+        type: 'column',
+        id: 'volume',
+        name: 'Volumen',
+        data: volumeData,
+        yAxis: 1,
+        borderWidth: 0,
+        showInLegend: false,
+      },
+    ];
+
+    if (showEMA) {
+      series.push(
+        {
+          type: 'ema', linkedTo: 'price', params: { period: 20 },
+          name: 'EMA 20', color: ORION.series1, lineWidth: 1.4,
+          marker: { enabled: false },
+        },
+        {
+          type: 'ema', linkedTo: 'price', params: { period: 50 },
+          name: 'EMA 50', color: ORION.series2, lineWidth: 1.4,
+          marker: { enabled: false },
+        },
+      );
+    }
+
+    if (showRSI) {
+      series.push({
+        type: 'rsi', linkedTo: 'price', yAxis: 2,
+        name: 'RSI 14', color: ORION.series3, lineWidth: 1.4,
+        marker: { enabled: false },
+      });
+    }
+
+    if (showSignals) {
+      series.push(
+        {
+          type: 'flags',
+          name: 'Señales compra',
+          data: flagPoints('buy'),
+          onSeries: 'price',
+          shape: 'squarepin',
+          width: 18,
+          fillColor: ORION.buy,
+          color: ORION.buy,
+          lineColor: ORION.buy,
+          y: -34,
+          style: { color: '#ffffff', fontSize: '9px' },
+          states: { hover: { fillColor: ORION.buyInk } },
+          showInLegend: false,
+        },
+        {
+          type: 'flags',
+          name: 'Señales venta',
+          data: flagPoints('sell'),
+          onSeries: 'price',
+          shape: 'squarepin',
+          width: 18,
+          fillColor: ORION.sell,
+          color: ORION.sell,
+          lineColor: ORION.sell,
+          y: -34,
+          style: { color: '#ffffff', fontSize: '9px' },
+          states: { hover: { fillColor: ORION.sellInk } },
+          showInLegend: false,
+        },
+      );
+    }
+
+    const yAxes: Highcharts.YAxisOptions[] = [
+      {
+        // precio
+        height: priceHeight,
+        labels: { align: 'right', x: -4, format: `{value:.${pair.decimals}f}` },
+        crosshair: {
+          color: ORION.strongLine,
+          dashStyle: 'Dash',
+          snap: false,
+          label: {
+            enabled: true,
+            backgroundColor: ORION.raised,
+            borderColor: ORION.strongLine,
+            borderWidth: 1,
+            borderRadius: 4,
+            format: `{value:.${pair.decimals}f}`,
+            style: { color: ORION.inkHi, fontSize: '10px', fontFamily: ORION.fontData },
+            padding: 5,
+          },
+        },
+        plotLines: [
+          {
+            // línea de último precio
+            value: last[4],
+            color: lastUp ? ORION.buy : ORION.sell,
+            width: 1,
+            dashStyle: 'Dash',
+            zIndex: 5,
+            label: {
+              text: last[4].toFixed(pair.decimals),
+              align: 'right',
+              x: -2,
+              y: 3,
+              useHTML: true,
+              style: {
+                color: '#ffffff',
+                fontSize: '9px',
+                fontFamily: ORION.fontData,
+                backgroundColor: lastUp ? ORION.buy : ORION.sell,
+                padding: '1px 5px',
+                borderRadius: '3px',
+              } as Highcharts.CSSObject,
+            },
+          },
+          ...signalPlotLines,
+        ],
+      },
+      {
+        // volumen
+        top: volTop,
+        height: '12%',
+        labels: { enabled: false },
+        gridLineWidth: 0,
+      },
+    ];
+
+    if (showRSI) {
+      yAxes.push({
+        top: '74%',
+        height: '26%',
+        min: 0,
+        max: 100,
+        tickPositions: [30, 50, 70],
+        labels: { align: 'right', x: -4 },
+        plotLines: [
+          { value: 70, color: ORION.hairline, width: 1, dashStyle: 'Dash' },
+          { value: 30, color: ORION.hairline, width: 1, dashStyle: 'Dash' },
+        ],
+      });
+    }
+
+    const chart = Highcharts.stockChart(ref.current, {
+      chart: { backgroundColor: 'transparent' },
+      xAxis: { gridLineWidth: 1, range: stepMs * 110 },
+      yAxis: yAxes,
+      legend: { enabled: false },
+      tooltip: {
+        split: false,
+        shared: true,
+        formatter: function () {
+          const points = this.points ?? [];
+          const head = `<div style="font-family:${ORION.fontData};font-size:10px;color:${ORION.inkMid};margin-bottom:4px">${fmtDateTime(this.x as number)}</div>`;
+          const rows = points
+            .map((p) => {
+              const anyPoint = p as unknown as {
+                open?: number; high?: number; low?: number; close?: number; y?: number;
+              };
+              if (p.series.options.id === 'price' && anyPoint.open !== undefined) {
+                const up = (anyPoint.close ?? 0) >= (anyPoint.open ?? 0);
+                const tone = up ? ORION.buyInk : ORION.sellInk;
+                const f = (v?: number) => (v ?? 0).toFixed(pair.decimals);
+                return `<div style="font-family:${ORION.fontData};font-size:10px;line-height:1.7">
+                  <span style="color:${ORION.inkLow}">A</span> <span style="color:${tone}">${f(anyPoint.open)}</span>
+                  <span style="color:${ORION.inkLow}">M</span> <span style="color:${tone}">${f(anyPoint.high)}</span>
+                  <span style="color:${ORION.inkLow}">m</span> <span style="color:${tone}">${f(anyPoint.low)}</span>
+                  <span style="color:${ORION.inkLow}">C</span> <span style="color:${tone}">${f(anyPoint.close)}</span>
+                </div>`;
+              }
+              if (p.series.options.id === 'volume') return '';
+              return `<div style="font-size:10px;line-height:1.7">
+                <span style="display:inline-block;width:7px;height:7px;border-radius:2px;background:${p.color};margin-right:5px"></span>
+                <span style="color:${ORION.inkMid}">${p.series.name}</span>
+                <span style="font-family:${ORION.fontData};color:${ORION.inkHi};margin-left:5px">${(p.y ?? 0).toFixed(pair.decimals)}</span>
+              </div>`;
+            })
+            .join('');
+          return `<div style="padding:2px">${head}${rows}</div>`;
+        },
+      },
+      navigator: { enabled: true },
+      series,
+    });
+
+    chartRef.current = chart;
+    return () => {
+      chart.destroy();
+      chartRef.current = null;
+    };
+  }, [symbol, tf, kind, showSignals, showEMA, showRSI, activeSignal]);
+
+  // el gráfico debe seguir el tamaño de su contenedor
+  useEffect(() => {
+    if (!ref.current) return;
+    const obs = new ResizeObserver(() => chartRef.current?.reflow());
+    obs.observe(ref.current);
+    return () => obs.disconnect();
+  }, []);
+
+  return <div ref={ref} className="main-chart" />;
+}

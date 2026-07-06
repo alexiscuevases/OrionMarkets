@@ -1,0 +1,120 @@
+/* ============================================================
+   ORION MARKETS — sistema de diseño
+   Identidad: constelación / terminal profundo.
+   Tipografía: Space Grotesk (UI) · JetBrains Mono (datos).
+   Paleta de series validada (CVD + contraste) sobre #10151f.
+   ============================================================ */
+
+:root {
+  color-scheme: dark;
+
+  /* Planos */
+  --bg-void: #070a10;          /* plano de página */
+  --bg-panel: #10151f;         /* superficie de panel / gráfico */
+  --bg-raised: #161d2b;        /* superficie elevada (cards, tooltips) */
+  --bg-inset: #0b0f17;         /* pozos: inputs, ranuras */
+  --bg-hover: rgba(148, 170, 210, 0.07);
+  --bg-active: rgba(148, 170, 210, 0.12);
+
+  /* Trazos */
+  --line-hair: rgba(148, 170, 210, 0.1);
+  --line-strong: rgba(148, 170, 210, 0.2);
+  --line-grid: #1b2231;        /* rejilla del gráfico */
+
+  /* Tinta */
+  --ink-hi: #eef2f9;
+  --ink-mid: #9aa7bd;
+  --ink-low: #5c6880;
+
+  /* Marca — el cinturón de Orión */
+  --star: #f0b429;             /* ámbar estelar: marca, foco, activo */
+  --star-dim: #c98500;         /* ámbar de serie (validado) */
+  --star-glow: rgba(240, 180, 41, 0.14);
+
+  /* IA — nebulosa */
+  --nebula: #8b7cf6;
+  --nebula-glow: rgba(139, 124, 246, 0.14);
+
+  /* Dirección de mercado (estado, siempre con forma + texto) */
+  --buy: #2bab63;              /* relleno de marcas */
+  --buy-ink: #4cc38a;          /* texto pequeño */
+  --buy-glow: rgba(43, 171, 99, 0.13);
+  --sell: #e5484d;
+  --sell-ink: #f2726f;
+  --sell-glow: rgba(229, 72, 77, 0.13);
+
+  /* Series de indicadores (validadas: cian, ámbar, violeta, magenta) */
+  --series-1: #2b9fd8;
+  --series-2: #c98500;
+  --series-3: #8b7cf6;
+  --series-4: #d55181;
+
+  /* Tipografía */
+  --font-ui: 'Space Grotesk', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-data: 'JetBrains Mono', ui-monospace, 'Cascadia Mono', Consolas, monospace;
+
+  /* Geometría */
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 14px;
+  --topbar-h: 54px;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  background: var(--bg-void);
+  color: var(--ink-hi);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(148, 170, 210, 0.16);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 170, 210, 0.28);
+}
+
+button {
+  font-family: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+input {
+  font-family: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  outline: none;
+}
+
+/* Cifras alineadas para columnas de datos */
+.num {
+  font-family: var(--font-data);
+  font-variant-numeric: tabular-nums;
+}
