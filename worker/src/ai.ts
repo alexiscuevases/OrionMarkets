@@ -37,9 +37,16 @@ export async function evaluateSignal(
     ],
     temperature: 0.2,
     max_tokens: 512,
-  })) as { response?: string };
+  })) as { response?: unknown };
 
-  return parseVerdict(result.response ?? '', context);
+  // algunos modelos de Workers AI devuelven `response` como objeto JSON ya
+  // parseado en lugar de string; se normaliza antes del parseo defensivo
+  const raw =
+    typeof result.response === 'string'
+      ? result.response
+      : JSON.stringify(result.response ?? '');
+
+  return parseVerdict(raw, context);
 }
 
 /** Parseo defensivo: si la IA no devuelve JSON válido → skip conservador. */
