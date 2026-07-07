@@ -219,6 +219,7 @@ export interface AISignal {
   stop: number;
   target: number;
   status: 'Activa' | 'Pendiente' | 'Cerrada';
+  outcome?: 'open' | 'tp_hit' | 'sl_hit' | 'expired';
   resultPips?: number;
   live?: boolean;
   overallScore?: number | null;    // 0-100 del sistema de scoring

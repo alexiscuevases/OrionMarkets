@@ -156,6 +156,7 @@ function adaptSignal(s: ApiSignal, tfOverride?: string): AISignal {
     stop: s.stop,
     target: s.target,
     status,
+    outcome: s.outcome,
     resultPips,
     live: true,
     overallScore: s.overallScore,

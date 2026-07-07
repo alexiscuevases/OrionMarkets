@@ -52,13 +52,26 @@ export default function MainChart({
     // en modo foco solo se dibuja la señal activa; el resto ensucia la lectura
     const visibleSignals = activeSignal ? [activeSignal] : signals;
 
+    const outcomeLabel = (s: AISignal): string => {
+      const pips =
+        s.resultPips !== undefined
+          ? ` · ${s.resultPips >= 0 ? '+' : ''}${s.resultPips} pips`
+          : '';
+      switch (s.outcome) {
+        case 'tp_hit': return `<span style="color:${ORION.buyInk}">TP alcanzado${pips}</span>`;
+        case 'sl_hit': return `<span style="color:${ORION.sellInk}">SL tocado${pips}</span>`;
+        case 'expired': return 'Expirada sin tocar TP/SL';
+        default: return `<span style="color:${ORION.star}">Activa</span>`;
+      }
+    };
+
     const flagPoints = (dir: 'buy' | 'sell') =>
       visibleSignals
         .filter((s) => s.direction === dir)
         .map((s) => ({
           x: s.time,
           title: dir === 'buy' ? '▲' : '▼',
-          text: `<b>${s.pattern}</b><br/>Confianza ${s.confidence}% · ${fmtDateTime(s.time)}`,
+          text: `<b>${s.pattern}</b><br/>Confianza ${s.confidence}% · ${fmtDateTime(s.time)}<br/>${outcomeLabel(s)}`,
         }));
 
     const priceHeight = showRSI ? (hasVolume ? '56%' : '68%') : hasVolume ? '78%' : '96%';

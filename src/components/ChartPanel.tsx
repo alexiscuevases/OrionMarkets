@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import MainChart, { type ChartKind } from './MainChart';
 import {
   TIMEFRAMES, pairBySymbol, quoteFromCandles, fmtPct, fmtPips,
@@ -28,13 +28,45 @@ const KINDS: { id: ChartKind; label: string; icon: typeof CandlesIcon }[] = [
   { id: 'area', label: 'Área', icon: AreaIcon },
 ];
 
+/* Qué señales se pintan sobre el gráfico. Por defecto solo las activas:
+   las cerradas (TP/SL/expiradas) se consultan con el filtro. */
+type SignalFilter = 'activas' | 'tp' | 'sl' | 'ia' | 'todas';
+
+const SIGNAL_FILTERS: { id: SignalFilter; label: string; title: string }[] = [
+  { id: 'activas', label: 'Activas', title: 'Señales aún abiertas' },
+  { id: 'tp', label: 'TP', title: 'Cerradas en take profit' },
+  { id: 'sl', label: 'SL', title: 'Cerradas en stop loss' },
+  { id: 'ia', label: 'IA', title: 'Con análisis de la IA' },
+  { id: 'todas', label: 'Todas', title: 'Todas las señales recientes' },
+];
+
+function matchesFilter(s: AISignal, f: SignalFilter): boolean {
+  switch (f) {
+    case 'activas': return s.outcome === 'open';
+    case 'tp': return s.outcome === 'tp_hit';
+    case 'sl': return s.outcome === 'sl_hit';
+    case 'ia': return s.overallScore != null;
+    case 'todas': return true;
+  }
+}
+
 export default function ChartPanel({
   symbol, tf, onTfChange, activeSignal, onExitSignal, series, signals, live, loading,
 }: Props) {
   const [kind, setKind] = useState<ChartKind>('candlestick');
   const [showSignals, setShowSignals] = useState(true);
+  const [signalFilter, setSignalFilter] = useState<SignalFilter>('activas');
   const [showEMA, setShowEMA] = useState(true);
   const [showRSI, setShowRSI] = useState(true);
+
+  // señales que pasan el filtro; la señal enfocada se pinta siempre
+  const visibleSignals = useMemo(() => {
+    const out = signals.filter((s) => matchesFilter(s, signalFilter));
+    if (activeSignal && !out.some((s) => s.id === activeSignal.id)) {
+      out.push(activeSignal);
+    }
+    return out;
+  }, [signals, signalFilter, activeSignal]);
 
   const pair = pairBySymbol(symbol);
   const tfMinutes = TIMEFRAMES.find((t) => t.id === tf)?.minutes ?? 60;
@@ -174,6 +206,22 @@ export default function ChartPanel({
           </button>
         )}
 
+        {showSignals && (
+          <div className="seg">
+            {SIGNAL_FILTERS.map((f) => (
+              <button
+                key={f.id}
+                title={f.title}
+                className={`seg__btn ${signalFilter === f.id ? 'seg__btn--on' : ''}`}
+                onClick={() => setSignalFilter(f.id)}
+              >
+                {f.label}
+                <span className="num"> {signals.filter((s) => matchesFilter(s, f.id)).length}</span>
+              </button>
+            ))}
+          </div>
+        )}
+
         <button
           className={`tool-toggle tool-toggle--ai ${showSignals ? 'tool-toggle--on' : ''}`}
           onClick={() => setShowSignals((v) => !v)}
@@ -193,7 +241,7 @@ export default function ChartPanel({
             showRSI={showRSI}
             activeSignal={activeSignal}
             series={series}
-            signals={signals}
+            signals={visibleSignals}
           />
         ) : (
           <div className="chart-empty">
