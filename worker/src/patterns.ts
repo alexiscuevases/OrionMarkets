@@ -494,7 +494,9 @@ export function resolveOutcome(
   candles: Candle[],
   maxBars: number,
 ): { outcome: 'open' | 'tp_hit' | 'sl_hit' | 'expired'; outcomeTs: number | null } {
-  const startIdx = candles.findIndex((c) => c.ts > signal.ts);
+  // búsqueda binaria: un findIndex lineal por cada señal del backlog
+  // agotaba el límite de CPU del Worker en los intervalos de 5min
+  const startIdx = firstIndexAfter(candles, signal.ts);
   if (startIdx < 0) return { outcome: 'open', outcomeTs: null };
 
   const end = Math.min(startIdx + maxBars, candles.length);
@@ -510,4 +512,16 @@ export function resolveOutcome(
     return { outcome: 'expired', outcomeTs: candles[end - 1].ts };
   }
   return { outcome: 'open', outcomeTs: null };
+}
+
+/** Primer índice con ts estrictamente mayor (velas ascendentes), -1 si no hay. */
+function firstIndexAfter(candles: Candle[], ts: number): number {
+  let lo = 0;
+  let hi = candles.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (candles[mid].ts > ts) hi = mid;
+    else lo = mid + 1;
+  }
+  return lo < candles.length ? lo : -1;
 }
