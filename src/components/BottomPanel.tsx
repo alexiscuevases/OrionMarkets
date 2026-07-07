@@ -42,6 +42,7 @@ export default function BottomPanel({ signals, onView }: Props) {
                 <th>Patrón</th>
                 <th>Estrategia</th>
                 <th className="ta-r">Confianza</th>
+                <th className="ta-r">Score</th>
                 <th className="ta-r">Entrada</th>
                 <th className="ta-r">SL</th>
                 <th className="ta-r">TP</th>
@@ -72,6 +73,13 @@ export default function BottomPanel({ signals, onView }: Props) {
                         </span>
                         <b className="num">{s.confidence}%</b>
                       </span>
+                    </td>
+                    <td className="ta-r">
+                      {s.overallScore != null ? (
+                        <span className="chip chip--score num">{s.overallScore}</span>
+                      ) : (
+                        <span className="dim">—</span>
+                      )}
                     </td>
                     <td className="num ta-r">{s.entry.toFixed(pair.decimals)}</td>
                     <td className="num ta-r sell-ink">{s.stop.toFixed(pair.decimals)}</td>

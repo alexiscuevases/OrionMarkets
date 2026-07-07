@@ -1,6 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "orion-markets-worker",
+  "account_id": "97876adefaf9f3ae69c0e776b1ea5819", // Alex Cuevas
   "main": "src/index.ts",
   "compatibility_date": "2026-06-01",
   "observability": { "enabled": true },

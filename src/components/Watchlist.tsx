@@ -1,5 +1,6 @@
-import { useMemo, useState } from 'react';
-import { PAIRS, getQuote, fmtPct, type Group } from '../data/market';
+import { useEffect, useMemo, useState } from 'react';
+import { PAIRS, getQuote, fmtPct, type Group, type Quote } from '../data/market';
+import { loadLiveQuote } from '../data/live';
 import Sparkline from './Sparkline';
 import { SearchIcon } from './icons';
 
@@ -13,6 +14,28 @@ const GROUPS: (Group | 'Todos')[] = ['Todos', 'Mayores', 'Menores', 'Exóticos']
 export default function Watchlist({ selected, onSelect }: Props) {
   const [group, setGroup] = useState<(typeof GROUPS)[number]>('Todos');
   const [query, setQuery] = useState('');
+  const [liveQuotes, setLiveQuotes] = useState<Record<string, Quote>>({});
+
+  // cotizaciones reales para los pares que cubre el motor
+  useEffect(() => {
+    let alive = true;
+    const refresh = async () => {
+      const updates: Record<string, Quote> = {};
+      await Promise.all(
+        PAIRS.map(async (p) => {
+          const q = await loadLiveQuote(p.symbol);
+          if (q) updates[p.symbol] = q;
+        }),
+      );
+      if (alive && Object.keys(updates).length > 0) setLiveQuotes(updates);
+    };
+    refresh();
+    const id = setInterval(refresh, 60_000);
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
+  }, []);
 
   const rows = useMemo(() => {
     return PAIRS.filter(
@@ -21,8 +44,12 @@ export default function Watchlist({ selected, onSelect }: Props) {
         (query === '' ||
           p.symbol.toLowerCase().includes(query.toLowerCase()) ||
           p.name.toLowerCase().includes(query.toLowerCase())),
-    ).map((p) => ({ pair: p, quote: getQuote(p.symbol) }));
-  }, [group, query]);
+    ).map((p) => ({
+      pair: p,
+      quote: liveQuotes[p.symbol] ?? getQuote(p.symbol),
+      live: p.symbol in liveQuotes,
+    }));
+  }, [group, query, liveQuotes]);
 
   return (
     <aside className="watchlist panel">
@@ -48,7 +75,7 @@ export default function Watchlist({ selected, onSelect }: Props) {
       </div>
 
       <div className="watchlist__rows">
-        {rows.map(({ pair, quote }) => {
+        {rows.map(({ pair, quote, live }) => {
           const up = quote.changePct >= 0;
           return (
             <button
@@ -60,6 +87,7 @@ export default function Watchlist({ selected, onSelect }: Props) {
                 <span className="wrow__sym">
                   {pair.base}
                   <em>/{pair.quote}</em>
+                  {live && <i className="live-dot" title="Datos del motor" />}
                 </span>
                 <span className="wrow__name">{pair.name}</span>
               </div>

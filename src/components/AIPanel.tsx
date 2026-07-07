@@ -9,6 +9,26 @@ interface Props {
   activeSignalId: string | null;
 }
 
+const DIM_LABELS: Record<string, string> = {
+  trend: 'Tendencia',
+  momentum: 'Momentum',
+  volume: 'Volumen',
+  volatility: 'Volatilidad',
+  macro: 'Macro',
+  news: 'Noticias',
+  sentiment: 'Sentimiento',
+  institutional: 'Institucional',
+  riskReward: 'Risk/Reward',
+};
+
+/** Desglose del score como tooltip: una línea de estrellas por dimensión. */
+function scoreTitle(scores?: Record<string, number> | null): string | undefined {
+  if (!scores) return undefined;
+  return Object.entries(scores)
+    .map(([k, v]) => `${DIM_LABELS[k] ?? k}: ${'★'.repeat(v)}${'☆'.repeat(Math.max(0, 5 - v))}`)
+    .join('\n');
+}
+
 export default function AIPanel({ signals, onView, activeSignalId }: Props) {
   return (
     <div className="side-scroll">
@@ -47,12 +67,20 @@ export default function AIPanel({ signals, onView, activeSignalId }: Props) {
               <b className="signal__pair">
                 {s.symbol} <em className="num">{s.tf}</em>
               </b>
+              {s.overallScore != null && (
+                <span
+                  className="chip chip--score num"
+                  title={scoreTitle(s.scores)}
+                >
+                  {s.overallScore}/100
+                </span>
+              )}
               <time className="num">{fmtDateTime(s.time)}</time>
             </header>
 
-            <div className="signal__pattern">
+            <div className="signal__pattern" title={s.aiThesis ?? undefined}>
               <span>Patrón: <b>{s.pattern}</b></span>
-              <span className="signal__strategy">vía {s.strategy}</span>
+              <span className="signal__strategy">{s.live ? s.strategy : `vía ${s.strategy}`}</span>
             </div>
 
             <div className="conf">

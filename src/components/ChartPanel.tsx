@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import MainChart, { type ChartKind } from './MainChart';
 import {
-  TIMEFRAMES, getQuote, pairBySymbol, fmtPct, fmtPips, type AISignal,
+  TIMEFRAMES, pairBySymbol, quoteFromCandles, fmtPct, fmtPips,
+  type AISignal, type SeriesData,
 } from '../data/market';
 import {
   AreaIcon, CandlesIcon, LayersIcon, LineIcon, OhlcIcon, SparkleIcon,
@@ -12,6 +13,9 @@ interface Props {
   tf: string;
   onTfChange: (tf: string) => void;
   activeSignal: AISignal | null;
+  series: SeriesData;
+  signals: AISignal[];
+  live: boolean;
 }
 
 const KINDS: { id: ChartKind; label: string; icon: typeof CandlesIcon }[] = [
@@ -21,14 +25,17 @@ const KINDS: { id: ChartKind; label: string; icon: typeof CandlesIcon }[] = [
   { id: 'area', label: 'Área', icon: AreaIcon },
 ];
 
-export default function ChartPanel({ symbol, tf, onTfChange, activeSignal }: Props) {
+export default function ChartPanel({
+  symbol, tf, onTfChange, activeSignal, series, signals, live,
+}: Props) {
   const [kind, setKind] = useState<ChartKind>('candlestick');
   const [showSignals, setShowSignals] = useState(true);
   const [showEMA, setShowEMA] = useState(true);
   const [showRSI, setShowRSI] = useState(true);
 
   const pair = pairBySymbol(symbol);
-  const quote = getQuote(symbol);
+  const tfMinutes = TIMEFRAMES.find((t) => t.id === tf)?.minutes ?? 60;
+  const quote = quoteFromCandles(symbol, series.candles, tfMinutes);
   const up = quote.changePct >= 0;
 
   // el último dígito significativo del precio se resalta como "pipeta"
@@ -44,7 +51,12 @@ export default function ChartPanel({ symbol, tf, onTfChange, activeSignal }: Pro
             {pair.base}
             <em>/{pair.quote}</em>
           </h1>
-          <span className="chart-head__name">{pair.name} · Forex</span>
+          <span className="chart-head__name">
+            {pair.name} · Forex
+            <span className={`src-badge ${live ? 'src-badge--live' : ''}`}>
+              {live ? '● EN VIVO' : '○ SIMULADO'}
+            </span>
+          </span>
         </div>
 
         <div className="chart-head__quote">
@@ -154,6 +166,8 @@ export default function ChartPanel({ symbol, tf, onTfChange, activeSignal }: Pro
           showEMA={showEMA}
           showRSI={showRSI}
           activeSignal={activeSignal}
+          series={series}
+          signals={signals}
         />
       </div>
     </section>

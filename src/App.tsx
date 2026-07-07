@@ -4,9 +4,8 @@ import Watchlist from './components/Watchlist';
 import ChartPanel from './components/ChartPanel';
 import SidePanel from './components/SidePanel';
 import BottomPanel from './components/BottomPanel';
-import {
-  STRATEGIES, getScannerSignals, getSignals, type AISignal, type Strategy,
-} from './data/market';
+import { useMarketData, useOpportunities } from './hooks/useMarketData';
+import { STRATEGIES, type AISignal, type Strategy } from './data/market';
 import './App.css';
 
 export default function App() {
@@ -15,19 +14,18 @@ export default function App() {
   const [strategies, setStrategies] = useState<Strategy[]>(STRATEGIES);
   const [activeSignal, setActiveSignal] = useState<AISignal | null>(null);
 
-  const scannerSignals = useMemo(() => getScannerSignals(), []);
-  const chartSignals = useMemo(
-    () => getSignals(symbol, tf).slice().reverse(),
-    [symbol, tf],
-  );
+  // serie + señales del par en pantalla (motor Cloudflare, con fallback simulado)
+  const market = useMarketData(symbol, tf);
+  // oportunidades puntuadas por el escáner global
+  const opportunities = useOpportunities();
 
-  // el panel IA mezcla las señales del par en pantalla con las del escáner global
+  // el panel IA mezcla las señales del par en pantalla con las del escáner
   const panelSignals = useMemo(() => {
     const seen = new Set<string>();
-    return [...chartSignals, ...scannerSignals]
+    return [...market.signals, ...opportunities.signals]
       .filter((s) => !seen.has(s.id) && seen.add(s.id))
       .slice(0, 9);
-  }, [chartSignals, scannerSignals]);
+  }, [market.signals, opportunities.signals]);
 
   const toggleStrategy = (id: string) =>
     setStrategies((prev) =>
@@ -55,7 +53,15 @@ export default function App() {
       <TopBar />
       <main className="workspace">
         <Watchlist selected={symbol} onSelect={changeSymbol} />
-        <ChartPanel symbol={symbol} tf={tf} onTfChange={changeTf} activeSignal={activeSignal} />
+        <ChartPanel
+          symbol={symbol}
+          tf={tf}
+          onTfChange={changeTf}
+          activeSignal={activeSignal}
+          series={market.series}
+          signals={market.signals}
+          live={market.live}
+        />
         <SidePanel
           strategies={strategies}
           onToggleStrategy={toggleStrategy}
@@ -63,7 +69,7 @@ export default function App() {
           onViewSignal={viewSignal}
           activeSignalId={activeSignal?.id ?? null}
         />
-        <BottomPanel signals={scannerSignals} onView={viewSignal} />
+        <BottomPanel signals={opportunities.signals} onView={viewSignal} />
       </main>
     </div>
   );

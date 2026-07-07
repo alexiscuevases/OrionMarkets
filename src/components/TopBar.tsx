@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
 import { SESSIONS, isSessionOpen } from '../data/market';
+import { useEngineStatus } from '../hooks/useMarketData';
 import { BellIcon, GearIcon, OrionMark, SparkleIcon } from './icons';
 
 export default function TopBar() {
   const [now, setNow] = useState(() => new Date());
+  const engine = useEngineStatus();
 
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 1000);
@@ -21,7 +23,11 @@ export default function TopBar() {
           <span className="topbar__name">ORION</span>
           <span className="topbar__sub">MARKETS</span>
         </div>
-        <span className="topbar__env">TERMINAL FX · DEMO</span>
+        <span className={`topbar__env ${engine.status === 'online' ? 'topbar__env--live' : ''}`}>
+          {engine.status === 'online'
+            ? `MOTOR EN VIVO${engine.lastRun ? ` · ${new Date(engine.lastRun).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}` : ''}`
+            : 'TERMINAL FX · DEMO'}
+        </span>
       </div>
 
       <div className="topbar__sessions">

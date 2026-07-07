@@ -164,12 +164,21 @@ export interface Quote {
 }
 
 export function getQuote(symbol: string): Quote {
+  return quoteFromCandles(symbol, getSeries(symbol, 'H1').candles, 60);
+}
+
+/** Cotización derivada de cualquier serie de velas (mock o del motor). */
+export function quoteFromCandles(
+  symbol: string,
+  candles: Candle[],
+  tfMinutes: number,
+): Quote {
   const pair = pairBySymbol(symbol);
-  const { candles } = getSeries(symbol, 'H1');
   const closes = candles.map((c) => c[4]);
   const last = closes[closes.length - 1];
-  const dayAgo = closes[Math.max(0, closes.length - 25)];
-  const day = candles.slice(-24);
+  const barsPerDay = Math.max(1, Math.round(1440 / tfMinutes));
+  const dayAgo = closes[Math.max(0, closes.length - 1 - barsPerDay)];
+  const day = candles.slice(-barsPerDay);
 
   return {
     symbol,
@@ -266,12 +275,17 @@ export interface AISignal {
   strategy: string;
   confidence: number;   // 0-100
   time: number;         // timestamp de la vela
-  candleIndex: number;  // índice sobre la serie del tf
+  candleIndex?: number; // índice sobre la serie del tf (solo señales simuladas)
   entry: number;
   stop: number;
   target: number;
   status: 'Activa' | 'Pendiente' | 'Cerrada';
   resultPips?: number;
+  /* campos presentes solo cuando la señal viene del motor real */
+  live?: boolean;
+  overallScore?: number | null;    // 0-100 del sistema de scoring
+  scores?: Record<string, number> | null; // desglose 0-5 por dimensión
+  aiThesis?: string | null;
 }
 
 const PATTERNS: { name: string; dir: Direction }[] = [

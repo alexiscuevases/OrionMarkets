@@ -254,7 +254,49 @@
 .chip--sell { color: var(--sell-ink); background: var(--sell-glow); }
 .chip--star { color: var(--star); background: var(--star-glow); }
 .chip--ghost { color: var(--ink-mid); background: var(--bg-hover); }
+.chip--score {
+  color: var(--nebula);
+  background: var(--nebula-glow);
+  box-shadow: inset 0 0 0 1px rgba(139, 124, 246, 0.3);
+}
 .chip em { font-style: normal; opacity: 0.85; }
+
+/* Origen de los datos del gráfico */
+.src-badge {
+  margin-left: 8px;
+  padding: 1px 7px;
+  border-radius: 99px;
+  border: 1px solid var(--line-hair);
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--ink-low);
+}
+
+.src-badge--live {
+  color: var(--buy-ink);
+  border-color: rgba(43, 171, 99, 0.35);
+  background: var(--buy-glow);
+}
+
+/* Punto "datos del motor" en la watchlist */
+.live-dot {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--buy-ink);
+  margin-left: 6px;
+  vertical-align: middle;
+  box-shadow: 0 0 5px var(--buy-ink);
+}
+
+/* Chip del motor en la barra superior */
+.topbar__env--live {
+  color: var(--buy-ink);
+  border-color: rgba(43, 171, 99, 0.35);
+  background: var(--buy-glow);
+}
 
 .dir {
   display: inline-flex;

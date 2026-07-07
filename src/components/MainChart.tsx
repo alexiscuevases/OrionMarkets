@@ -1,8 +1,8 @@
 import { useEffect, useRef } from 'react';
 import Highcharts, { ORION, applyOrionTheme } from '../charts/orionTheme';
 import {
-  getSeries, getSignals, pairBySymbol, fmtDateTime,
-  type AISignal,
+  pairBySymbol, fmtDateTime,
+  type AISignal, type SeriesData,
 } from '../data/market';
 
 applyOrionTheme();
@@ -17,10 +17,12 @@ interface Props {
   showEMA: boolean;
   showRSI: boolean;
   activeSignal: AISignal | null;
+  series: SeriesData;
+  signals: AISignal[];
 }
 
 export default function MainChart({
-  symbol, tf, kind, showSignals, showEMA, showRSI, activeSignal,
+  symbol, tf, kind, showSignals, showEMA, showRSI, activeSignal, series, signals,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const chartRef = useRef<Highcharts.Chart | null>(null);
@@ -29,8 +31,8 @@ export default function MainChart({
     if (!ref.current) return;
 
     const pair = pairBySymbol(symbol);
-    const { candles, volume } = getSeries(symbol, tf);
-    const signals = getSignals(symbol, tf);
+    const { candles, volume } = series;
+    if (candles.length < 2) return;
     const last = candles[candles.length - 1];
     const lastUp = last[4] >= last[1];
     const stepMs = candles[1][0] - candles[0][0];
@@ -105,7 +107,7 @@ export default function MainChart({
             }),
           };
 
-    const series: Highcharts.SeriesOptionsType[] = [
+    const chartSeries: Highcharts.SeriesOptionsType[] = [
       priceSeries,
       {
         type: 'column',
@@ -119,7 +121,7 @@ export default function MainChart({
     ];
 
     if (showEMA) {
-      series.push(
+      chartSeries.push(
         {
           type: 'ema', linkedTo: 'price', params: { period: 20 },
           name: 'EMA 20', color: ORION.series1, lineWidth: 1.4,
@@ -134,7 +136,7 @@ export default function MainChart({
     }
 
     if (showRSI) {
-      series.push({
+      chartSeries.push({
         type: 'rsi', linkedTo: 'price', yAxis: 2,
         name: 'RSI 14', color: ORION.series3, lineWidth: 1.4,
         marker: { enabled: false },
@@ -142,7 +144,7 @@ export default function MainChart({
     }
 
     if (showSignals) {
-      series.push(
+      chartSeries.push(
         {
           type: 'flags',
           name: 'Señales compra',
@@ -286,7 +288,7 @@ export default function MainChart({
         },
       },
       navigator: { enabled: true },
-      series,
+      series: chartSeries,
     });
 
     chartRef.current = chart;
@@ -294,7 +296,7 @@ export default function MainChart({
       chart.destroy();
       chartRef.current = null;
     };
-  }, [symbol, tf, kind, showSignals, showEMA, showRSI, activeSignal]);
+  }, [symbol, tf, kind, showSignals, showEMA, showRSI, activeSignal, series, signals]);
 
   // el gráfico debe seguir el tamaño de su contenedor
   useEffect(() => {
