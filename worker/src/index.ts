@@ -103,7 +103,7 @@ export default {
                   e.ai_thesis AS aiThesis, e.ai_risks AS aiRisks,
                   e.scores_json AS scoresJson, e.overall_score AS overallScore
            FROM evaluations e JOIN signals s ON s.sig_key = e.sig_key
-           WHERE e.ai_action != 'skip'
+           WHERE e.ai_action != 'skip' AND s.outcome = 'open'
            ORDER BY e.overall_score DESC, s.ts DESC LIMIT ?`,
         )
         .bind(limit)

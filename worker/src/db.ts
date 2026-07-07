@@ -112,16 +112,22 @@ export async function insertSignals(
   return inserted;
 }
 
-export async function updateOutcome(
+/** Resoluciones TP/SL/expiración en lote: una llamada D1 por cada 40 filas.
+    (Un UPDATE individual por señal agotaba el límite de subrequests del
+    Worker en intervalos con miles de señales abiertas.) */
+export async function updateOutcomes(
   db: D1Database,
-  sigKey: string,
-  outcome: Outcome,
-  outcomeTs: number | null,
+  updates: { sigKey: string; outcome: Outcome; outcomeTs: number | null }[],
 ): Promise<void> {
-  await db
-    .prepare('UPDATE signals SET outcome = ?, outcome_ts = ? WHERE sig_key = ?')
-    .bind(outcome, outcomeTs, sigKey)
-    .run();
+  if (updates.length === 0) return;
+  const stmts = updates.map((u) =>
+    db
+      .prepare('UPDATE signals SET outcome = ?, outcome_ts = ? WHERE sig_key = ?')
+      .bind(u.outcome, u.outcomeTs, u.sigKey),
+  );
+  for (let i = 0; i < stmts.length; i += STMTS_PER_BATCH) {
+    await db.batch(stmts.slice(i, i + STMTS_PER_BATCH));
+  }
 }
 
 export async function getOpenSignals(
@@ -140,7 +146,9 @@ export async function getOpenSignals(
   return results;
 }
 
-/** Señales fiables pendientes de evaluación IA, mejores primero. */
+/** Señales fiables pendientes de evaluación IA, mejores primero.
+    Solo señales aún abiertas: evaluar una operación ya cerrada o expirada
+    gasta cuota de IA sin producir nada accionable. */
 export async function getUnevaluatedSignals(
   db: D1Database,
   minConfidence: number,
@@ -152,7 +160,7 @@ export async function getUnevaluatedSignals(
               s.entry, s.stop, s.target, s.rr, s.confidence, s.outcome, s.outcome_ts AS outcomeTs
        FROM signals s
        LEFT JOIN evaluations e ON e.sig_key = s.sig_key
-       WHERE e.sig_key IS NULL AND s.confidence >= ?
+       WHERE e.sig_key IS NULL AND s.confidence >= ? AND s.outcome = 'open'
        ORDER BY s.ts DESC
        LIMIT ?`,
     )

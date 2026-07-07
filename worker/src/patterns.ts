@@ -10,11 +10,43 @@ import type { Candle, DetectedSignal, Direction } from './types';
    stop y target derivados de la estructura del patrón; confidence 0-100
    calculada solo con reglas (sin IA). */
 
+/* ---------- Perfil por temporalidad ----------
+   Cada estrategia usa parámetros acordes a su intervalo: EMAs más rápidas
+   y ventanas más largas (en velas) cuanto menor es el marco, y expiración
+   proporcional al horizonte real del patrón. */
+
+export interface TfProfile {
+  emaFast: number;
+  emaSlow: number;
+  crossConfirmBars: number;   // velas que el cruce debe sostenerse
+  crossMinSepAtr: number;     // separación mínima EMA rápida-lenta en ATRs
+  crossCooldownBars: number;  // distancia mínima entre señales de cruce
+  divSpan: [number, number];  // separación de pivotes en divergencia RSI
+  dtbSpan: [number, number];  // separación de pivotes en doble techo/suelo
+  breakoutN: number;          // ventana Donchian de la ruptura de rango
+  expiryBars: number;         // velas sin tocar TP/SL → 'expired'
+}
+
+export const TF_PROFILES: Record<string, TfProfile> = {
+  '5min':  { emaFast: 9,  emaSlow: 21, crossConfirmBars: 3, crossMinSepAtr: 0.15, crossCooldownBars: 12, divSpan: [8, 60], dtbSpan: [10, 90], breakoutN: 48, expiryBars: 144 }, // expira en ~12 h
+  '15min': { emaFast: 12, emaSlow: 26, crossConfirmBars: 2, crossMinSepAtr: 0.12, crossCooldownBars: 8,  divSpan: [8, 60], dtbSpan: [10, 90], breakoutN: 40, expiryBars: 96 },  // ~24 h
+  '30min': { emaFast: 20, emaSlow: 50, crossConfirmBars: 2, crossMinSepAtr: 0.10, crossCooldownBars: 6,  divSpan: [8, 50], dtbSpan: [10, 80], breakoutN: 40, expiryBars: 96 },  // ~48 h
+  '45min': { emaFast: 20, emaSlow: 50, crossConfirmBars: 2, crossMinSepAtr: 0.10, crossCooldownBars: 6,  divSpan: [8, 50], dtbSpan: [10, 80], breakoutN: 32, expiryBars: 64 },  // ~48 h
+  '1h':    { emaFast: 20, emaSlow: 50, crossConfirmBars: 1, crossMinSepAtr: 0.10, crossCooldownBars: 4,  divSpan: [8, 48], dtbSpan: [10, 72], breakoutN: 24, expiryBars: 72 },  // ~3 días
+};
+
+const DEFAULT_PROFILE = TF_PROFILES['1h'];
+
+export function profileFor(interval: string): TfProfile {
+  return TF_PROFILES[interval] ?? DEFAULT_PROFILE;
+}
+
 interface Ctx {
   candles: Candle[];
   closes: number[];
-  ema20: number[];
-  ema50: number[];
+  profile: TfProfile;
+  emaFast: number[];
+  emaSlow: number[];
   ema200: number[];
   rsi14: number[];
   atr14: number[];
@@ -41,12 +73,14 @@ export function detectAll(
 ): DetectedSignal[] {
   if (candles.length < MIN_BARS) return [];
 
+  const profile = profileFor(interval);
   const closes = candles.map((c) => c.close);
   const ctx: Ctx = {
     candles,
     closes,
-    ema20: ema(closes, 20),
-    ema50: ema(closes, 50),
+    profile,
+    emaFast: ema(closes, profile.emaFast),
+    emaSlow: ema(closes, profile.emaSlow),
     ema200: ema(closes, 200),
     rsi14: rsi(closes, 14),
     atr14: atr(candles, 14),
@@ -66,6 +100,9 @@ export function detectAll(
   const out: DetectedSignal[] = [];
   for (const detect of detectors) {
     for (const raw of detect(ctx)) {
+      // la última vela puede estar aún en formación (la ingesta la re-toma
+      // en la siguiente pasada); no se confirma nada sobre ella
+      if (raw.index >= candles.length - 1) continue;
       const candle = candles[raw.index];
       const entry = candle.close;
       const risk = Math.abs(entry - raw.stop);
@@ -101,31 +138,45 @@ function trendBonus(ctx: Ctx, i: number, dir: Direction): number {
   return (dir === 'buy') === above ? 12 : -8;
 }
 
-/* ---------- 1. Cruce EMA 20/50 ---------- */
+/* ---------- 1. Cruce EMA rápida/lenta (periodos según intervalo) ---------- */
 
 function emaCross(ctx: Ctx): RawSignal[] {
+  const { emaFast, emaSlow, crossConfirmBars, crossMinSepAtr, crossCooldownBars } = ctx.profile;
   const out: RawSignal[] = [];
+  let lastIdx = -Infinity;
+
   for (let i = MIN_BARS; i < ctx.candles.length; i++) {
-    const prevDiff = ctx.ema20[i - 1] - ctx.ema50[i - 1];
-    const diff = ctx.ema20[i] - ctx.ema50[i];
+    const prevDiff = ctx.emaFast[i - 1] - ctx.emaSlow[i - 1];
+    const diff = ctx.emaFast[i] - ctx.emaSlow[i];
     if (!Number.isFinite(prevDiff) || !Number.isFinite(diff)) continue;
     if (prevDiff === 0 || Math.sign(prevDiff) === Math.sign(diff)) continue;
 
+    // confirmación anti-latigazo: el cruce debe sostenerse N velas y las
+    // medias separarse al menos una fracción del ATR
+    const j = i + crossConfirmBars;
+    if (j >= ctx.candles.length) continue;
+    const confDiff = ctx.emaFast[j] - ctx.emaSlow[j];
+    const a = ctx.atr14[j];
+    if (!Number.isFinite(confDiff) || !Number.isFinite(a)) continue;
+    if (Math.sign(confDiff) !== Math.sign(diff)) continue;   // el cruce se deshizo
+    if (Math.abs(confDiff) < a * crossMinSepAtr) continue;   // sin separación → ruido
+    if (j - lastIdx < crossCooldownBars) continue;           // demasiado cerca del anterior
+    lastIdx = j;
+
     const dir: Direction = diff > 0 ? 'buy' : 'sell';
-    const a = ctx.atr14[i];
-    const c = ctx.candles[i];
+    const c = ctx.candles[j];
     const stop = dir === 'buy' ? c.close - a * 2 : c.close + a * 2;
     const target = dir === 'buy' ? c.close + a * 3.5 : c.close - a * 3.5;
 
-    // separación posterior de las medias como medida de fuerza del cruce
-    const strength = Math.min(10, (Math.abs(diff) / a) * 20);
+    // separación tras la confirmación como medida de fuerza del cruce
+    const strength = Math.min(10, (Math.abs(confDiff) / a) * 20);
     out.push({
-      index: i,
-      pattern: 'Cruce EMA 20/50',
+      index: j,
+      pattern: `Cruce EMA ${emaFast}/${emaSlow}`,
       direction: dir,
       stop,
       target,
-      confidence: 52 + strength + trendBonus(ctx, i, dir),
+      confidence: 52 + strength + trendBonus(ctx, j, dir),
     });
   }
   return out;
@@ -138,12 +189,13 @@ function rsiDivergence(ctx: Ctx): RawSignal[] {
   const lows = ctx.swingList.filter((s) => s.kind === 'low');
   const highs = ctx.swingList.filter((s) => s.kind === 'high');
 
+  const [divMin, divMax] = ctx.profile.divSpan;
   const scan = (pivots: Swing[], dir: Direction) => {
     for (let k = 1; k < pivots.length; k++) {
       const p1 = pivots[k - 1];
       const p2 = pivots[k];
       const span = p2.index - p1.index;
-      if (span < 8 || span > 60) continue;
+      if (span < divMin || span > divMax) continue;
 
       const r1 = ctx.rsi14[p1.index];
       const r2 = ctx.rsi14[p2.index];
@@ -275,13 +327,14 @@ function pinBar(ctx: Ctx): RawSignal[] {
 function doubleTopBottom(ctx: Ctx): RawSignal[] {
   const out: RawSignal[] = [];
 
+  const [dtbMin, dtbMax] = ctx.profile.dtbSpan;
   const scan = (kind: 'low' | 'high') => {
     const pivots = ctx.swingList.filter((s) => s.kind === kind);
     for (let k = 1; k < pivots.length; k++) {
       const p1 = pivots[k - 1];
       const p2 = pivots[k];
       const span = p2.index - p1.index;
-      if (span < 10 || span > 90) continue;
+      if (span < dtbMin || span > dtbMax) continue;
 
       const a = ctx.atr14[p2.index];
       if (!Number.isFinite(a)) continue;
@@ -394,7 +447,7 @@ function flag(ctx: Ctx): RawSignal[] {
 
 function rangeBreakout(ctx: Ctx): RawSignal[] {
   const out: RawSignal[] = [];
-  const N = 40;
+  const N = ctx.profile.breakoutN;
 
   for (let i = MIN_BARS; i < ctx.candles.length; i++) {
     const a = ctx.atr14[i];
@@ -432,13 +485,14 @@ function rangeBreakout(ctx: Ctx): RawSignal[] {
 
 /**
  * Recorre las velas posteriores a la señal y decide si tocó TP o SL.
- * Si tras `maxBars` no tocó ninguno → 'expired'. Determinista: si en la
- * misma vela caben ambos, gana el SL (criterio conservador).
+ * Si tras `maxBars` (expiryBars del perfil del intervalo) no tocó ninguno
+ * → 'expired'. Determinista: si en la misma vela caben ambos, gana el SL
+ * (criterio conservador).
  */
 export function resolveOutcome(
   signal: { ts: number; direction: Direction; stop: number; target: number },
   candles: Candle[],
-  maxBars = 400,
+  maxBars: number,
 ): { outcome: 'open' | 'tp_hit' | 'sl_hit' | 'expired'; outcomeTs: number | null } {
   const startIdx = candles.findIndex((c) => c.ts > signal.ts);
   if (startIdx < 0) return { outcome: 'open', outcomeTs: null };

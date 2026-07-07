@@ -6,10 +6,10 @@ import {
 } from 'cloudflare:workers';
 import {
   getCursor, getOpenSignals, getUnevaluatedSignals, insertSignals,
-  loadCandles, setCursor, updateOutcome, upsertCandles,
+  loadCandles, setCursor, updateOutcomes, upsertCandles,
 } from './db';
 import { fetchSeries } from './twelvedata';
-import { detectAll, resolveOutcome } from './patterns';
+import { detectAll, profileFor, resolveOutcome } from './patterns';
 import { buildContext } from './enrich';
 import { evaluateSignal } from './ai';
 import { scoreSignal } from './scoring';
@@ -111,16 +111,18 @@ export class OrionPipeline extends WorkflowEntrypoint<Env, PipelineParams> {
           const signals = detectAll(symbol, interval, candles);
           const inserted = await insertSignals(db, signals);
 
-          // resolver TP/SL de señales aún abiertas con las velas nuevas
-          let resolved = 0;
+          // resolver TP/SL/expiración de señales abiertas con las velas
+          // nuevas; los UPDATE van en lote para no agotar subrequests
+          const expiryBars = profileFor(interval).expiryBars;
+          const resolutions = [];
           for (const open of await getOpenSignals(db, symbol, interval)) {
-            const r = resolveOutcome(open, candles);
+            const r = resolveOutcome(open, candles, expiryBars);
             if (r.outcome !== 'open') {
-              await updateOutcome(db, open.sigKey, r.outcome, r.outcomeTs);
-              resolved++;
+              resolutions.push({ sigKey: open.sigKey, outcome: r.outcome, outcomeTs: r.outcomeTs });
             }
           }
-          return { inserted, resolved };
+          await updateOutcomes(db, resolutions);
+          return { inserted, resolved: resolutions.length };
         });
         newSignals += res.inserted;
       }
