@@ -614,6 +614,44 @@
   background: var(--nebula-glow);
 }
 
+/* chip de señal en foco: indica qué señal se está viendo y permite salir */
+.signal-focus-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: var(--r-sm);
+  font-size: 10.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.signal-focus-chip--buy {
+  color: var(--buy-ink);
+  border: 1px solid rgba(43, 171, 99, 0.35);
+  background: var(--buy-glow);
+}
+
+.signal-focus-chip--sell {
+  color: var(--sell-ink);
+  border: 1px solid rgba(229, 72, 77, 0.35);
+  background: var(--sell-glow);
+}
+
+.signal-focus-chip .num {
+  font-weight: 500;
+  color: var(--ink-mid);
+}
+
+.signal-focus-chip__x {
+  margin-left: 2px;
+  padding-left: 8px;
+  border-left: 1px solid var(--line-hair);
+  color: var(--ink-low);
+}
+
+.signal-focus-chip:hover .signal-focus-chip__x { color: var(--ink-hi); }
+
 .chart-body {
   flex: 1;
   min-height: 0;

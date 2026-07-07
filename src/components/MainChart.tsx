@@ -49,8 +49,11 @@ export default function MainChart({
         : 'rgba(229, 72, 77, 0.35)',
     }));
 
+    // en modo foco solo se dibuja la señal activa; el resto ensucia la lectura
+    const visibleSignals = activeSignal ? [activeSignal] : signals;
+
     const flagPoints = (dir: 'buy' | 'sell') =>
-      signals
+      visibleSignals
         .filter((s) => s.direction === dir)
         .map((s) => ({
           x: s.time,
@@ -148,7 +151,8 @@ export default function MainChart({
       });
     }
 
-    if (showSignals) {
+    // la bandera de la señal activa se muestra aunque los patrones estén ocultos
+    if (showSignals || activeSignal) {
       chartSeries.push(
         {
           type: 'flags',
@@ -185,9 +189,9 @@ export default function MainChart({
 
     const yAxes: Highcharts.YAxisOptions[] = [
       {
-        // precio
+        // precio — etiquetas fuera del área de velas para que no las pise la serie
         height: priceHeight,
-        labels: { align: 'right', x: -4, format: `{value:.${pair.decimals}f}` },
+        labels: { align: 'left', x: 8, format: `{value:.${pair.decimals}f}` },
         crosshair: {
           color: ORION.strongLine,
           dashStyle: 'Dash',
@@ -214,7 +218,8 @@ export default function MainChart({
             label: {
               text: last[4].toFixed(pair.decimals),
               align: 'right',
-              x: -2,
+              textAlign: 'left',
+              x: 6,
               y: 3,
               useHTML: true,
               style: {
@@ -249,7 +254,7 @@ export default function MainChart({
         min: 0,
         max: 100,
         tickPositions: [30, 50, 70],
-        labels: { align: 'right', x: -4 },
+        labels: { align: 'left', x: 8 },
         plotLines: [
           { value: 70, color: ORION.hairline, width: 1, dashStyle: 'Dash' },
           { value: 30, color: ORION.hairline, width: 1, dashStyle: 'Dash' },
@@ -259,7 +264,8 @@ export default function MainChart({
 
     const chart = Highcharts.stockChart(ref.current, {
       chart: { backgroundColor: 'transparent' },
-      xAxis: { gridLineWidth: 1, range: stepMs * 110 },
+      // overscroll deja aire a la derecha de la última vela, estilo TradingView
+      xAxis: { gridLineWidth: 1, range: stepMs * 110, overscroll: stepMs * 6 },
       yAxis: yAxes,
       legend: { enabled: false },
       tooltip: {
@@ -298,6 +304,14 @@ export default function MainChart({
       navigator: { enabled: true },
       series: chartSeries,
     });
+
+    // si la señal activa cae fuera del rango visible, se trae a pantalla
+    if (activeSignal) {
+      const dataMax = candles[candles.length - 1][0];
+      if (activeSignal.time < dataMax - stepMs * 110) {
+        chart.xAxis[0].setExtremes(activeSignal.time - stepMs * 20, dataMax + stepMs * 6);
+      }
+    }
 
     chartRef.current = chart;
     return () => {

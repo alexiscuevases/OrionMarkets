@@ -1,9 +1,20 @@
-import { INTERVALS, SYMBOLS, type Env } from './types';
+import { INTERVALS, SYMBOLS, type Env, type Interval } from './types';
 export { OrionPipeline } from './workflow';
 
 /* Punto de entrada del Worker:
-   - scheduled: el cron horario crea una instancia del pipeline
+   - scheduled: cron cada 15 min; cada disparo refresca solo los intervalos
+     que le tocan (ver CRON_INTERVALS) para no agotar la cuota diaria
    - fetch: API JSON de solo lectura para el frontend + trigger manual */
+
+/* Reparto por minuto del cron: los marcos rápidos se refrescan cada hora en
+   el minuto 15 y el resto escalonado. Con 3 símbolos esto queda en ~360
+   llamadas/día a Twelve Data (límite del plan: 800). */
+const CRON_INTERVALS: Record<number, Interval[]> = {
+  0: ['1h'],
+  15: ['5min', '15min'],
+  30: ['30min'],
+  45: ['45min'],
+};
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -28,9 +39,10 @@ function validInterval(i: string | null): i is (typeof INTERVALS)[number] {
 
 export default {
   async scheduled(event, env) {
+    const minute = new Date(event.scheduledTime).getUTCMinutes();
     await env.PIPELINE.create({
       id: `cron-${event.scheduledTime}`,
-      params: { trigger: 'cron' },
+      params: { trigger: 'cron', intervals: CRON_INTERVALS[minute] ?? [...INTERVALS] },
     });
   },
 

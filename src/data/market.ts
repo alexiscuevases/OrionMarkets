@@ -50,6 +50,7 @@ export const TIMEFRAMES: Timeframe[] = [
   { id: 'M5', label: 'M5', minutes: 5, candles: 400 },
   { id: 'M15', label: 'M15', minutes: 15, candles: 420 },
   { id: 'M30', label: 'M30', minutes: 30, candles: 420 },
+  { id: 'M45', label: 'M45', minutes: 45, candles: 420 },
   { id: 'H1', label: 'H1', minutes: 60, candles: 480 },
   { id: 'H4', label: 'H4', minutes: 240, candles: 420 },
   { id: 'D1', label: 'D1', minutes: 1440, candles: 365 },

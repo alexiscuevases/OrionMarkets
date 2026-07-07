@@ -58,6 +58,7 @@ export default function App() {
           tf={tf}
           onTfChange={changeTf}
           activeSignal={activeSignal}
+          onExitSignal={() => setActiveSignal(null)}
           series={market.series}
           signals={market.signals}
           live={market.live}

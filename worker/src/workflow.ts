@@ -15,11 +15,13 @@ import { evaluateSignal } from './ai';
 import { scoreSignal } from './scoring';
 import {
   HISTORY_START, INTERVALS, INTERVAL_MS, SYMBOLS,
-  type Env, type SignalContext, type AiVerdict,
+  type Env, type Interval, type SignalContext, type AiVerdict,
 } from './types';
 
 export interface PipelineParams {
   trigger: 'cron' | 'manual';
+  /** Intervalos a refrescar en esta pasada; ausente/vacío → todos. */
+  intervals?: Interval[];
 }
 
 /* Pipeline horario en 4 fases (un solo workflow → orden garantizado,
@@ -46,12 +48,14 @@ const AI_RETRY: WorkflowStepConfig = {
 export class OrionPipeline extends WorkflowEntrypoint<Env, PipelineParams> {
   async run(event: WorkflowEvent<PipelineParams>, step: WorkflowStep) {
     const db = this.env.DB;
+    const intervals: readonly Interval[] =
+      event.payload.intervals?.length ? event.payload.intervals : INTERVALS;
 
     /* ---------- FASE 1 · Ingesta ---------- */
 
     let ingested = 0;
     for (const symbol of SYMBOLS) {
-      for (const interval of INTERVALS) {
+      for (const interval of intervals) {
         // hasta 2 páginas por combinación y ejecución: el backfill desde
         // HISTORY_START converge en pocas horas sin agotar la cuota diaria
         for (const page of [1, 2] as const) {
@@ -102,7 +106,7 @@ export class OrionPipeline extends WorkflowEntrypoint<Env, PipelineParams> {
 
     let newSignals = 0;
     for (const symbol of SYMBOLS) {
-      for (const interval of INTERVALS) {
+      for (const interval of intervals) {
         const res = await step.do(`detecta ${symbol} ${interval}`, RETRY, async () => {
           const candles = await loadCandles(db, symbol, interval, 50_000);
           if (candles.length === 0) return { inserted: 0, resolved: 0 };

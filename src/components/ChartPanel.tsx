@@ -6,7 +6,7 @@ import {
 } from '../data/market';
 import { isLiveCapable } from '../data/live';
 import {
-  AreaIcon, CandlesIcon, LayersIcon, LineIcon, OhlcIcon, SparkleIcon,
+  AreaIcon, CandlesIcon, LayersIcon, LineIcon, OhlcIcon, SparkleIcon, TargetIcon,
 } from './icons';
 
 interface Props {
@@ -14,6 +14,7 @@ interface Props {
   tf: string;
   onTfChange: (tf: string) => void;
   activeSignal: AISignal | null;
+  onExitSignal: () => void;
   series: SeriesData | null;
   signals: AISignal[];
   live: boolean;
@@ -28,7 +29,7 @@ const KINDS: { id: ChartKind; label: string; icon: typeof CandlesIcon }[] = [
 ];
 
 export default function ChartPanel({
-  symbol, tf, onTfChange, activeSignal, series, signals, live, loading,
+  symbol, tf, onTfChange, activeSignal, onExitSignal, series, signals, live, loading,
 }: Props) {
   const [kind, setKind] = useState<ChartKind>('candlestick');
   const [showSignals, setShowSignals] = useState(true);
@@ -159,6 +160,19 @@ export default function ChartPanel({
         </button>
 
         <span className="toolbar-spacer" />
+
+        {activeSignal && (
+          <button
+            className={`signal-focus-chip ${activeSignal.direction === 'buy' ? 'signal-focus-chip--buy' : 'signal-focus-chip--sell'}`}
+            title="Salir de la señal"
+            onClick={onExitSignal}
+          >
+            <TargetIcon size={12} />
+            Señal {activeSignal.direction === 'buy' ? 'COMPRA' : 'VENTA'}
+            <span className="num">{activeSignal.symbol} · {activeSignal.tf}</span>
+            <span className="signal-focus-chip__x">✕</span>
+          </button>
+        )}
 
         <button
           className={`tool-toggle tool-toggle--ai ${showSignals ? 'tool-toggle--on' : ''}`}

@@ -13,6 +13,7 @@ const TF_TO_INTERVAL: Record<string, string> = {
   M5: '5min',
   M15: '15min',
   M30: '30min',
+  M45: '45min',
   H1: '1h',
 };
 
@@ -106,7 +107,7 @@ const INTERVAL_TO_TF: Record<string, string> = {
   '5min': 'M5',
   '15min': 'M15',
   '30min': 'M30',
-  '45min': 'M30', // la UI no tiene M45; se aproxima al más cercano
+  '45min': 'M45',
   '1h': 'H1',
 };
 
