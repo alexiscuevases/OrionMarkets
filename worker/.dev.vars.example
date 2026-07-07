@@ -1,0 +1,2 @@
+# Copia este archivo a .dev.vars para desarrollo local (no lo subas al repo)
+TWELVEDATA_API_KEY=tu_api_key_de_twelvedata

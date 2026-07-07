@@ -1,0 +1,21 @@
+{
+	"name": "orion-markets-worker",
+	"private": true,
+	"version": "0.0.0",
+	"type": "module",
+	"scripts": {
+		"dev": "wrangler dev --test-scheduled",
+		"deploy": "wrangler deploy",
+		"typecheck": "tsc --noEmit",
+		"test": "tsx test/smoke.ts",
+		"db:local": "wrangler d1 migrations apply orion-db --local",
+		"db:remote": "wrangler d1 migrations apply orion-db --remote",
+		"tail": "wrangler tail"
+	},
+	"devDependencies": {
+		"@cloudflare/workers-types": "^4.20250620.0",
+		"tsx": "^4.23.0",
+		"typescript": "~6.0.2",
+		"wrangler": "^4.24.0"
+	}
+}

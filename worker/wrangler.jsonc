@@ -1,0 +1,46 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "orion-markets-worker",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-06-01",
+  "observability": { "enabled": true },
+
+  // Pipeline horario: ingesta → detección → IA → scoring (un Workflow, 4 fases)
+  "triggers": { "crons": ["0 * * * *"] },
+
+  "workflows": [
+    {
+      "name": "orion-pipeline",
+      "binding": "PIPELINE",
+      "class_name": "OrionPipeline"
+    }
+  ],
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "orion-db",
+      "database_id": "8a8a42ef-f6e7-4882-8e77-af609c579a48"
+    }
+  ],
+
+  "kv_namespaces": [
+    {
+      "binding": "CACHE",
+      "id": "c68c10f6d0b84105a171ff4a13ce756d"
+    }
+  ],
+
+  "ai": { "binding": "AI" },
+
+  "vars": {
+    // Modelo de Workers AI para la evaluación de señales
+    "AI_MODEL": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+    // Confianza mínima (0-100) del patrón determinista para activar la IA
+    "AI_MIN_CONFIDENCE": "65",
+    // Máximo de señales evaluadas por IA en cada ejecución
+    "AI_MAX_PER_RUN": "8"
+  }
+  // Secretos (no van aquí):
+  //   wrangler secret put TWELVEDATA_API_KEY
+}

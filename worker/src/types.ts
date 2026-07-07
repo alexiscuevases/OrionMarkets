@@ -1,0 +1,104 @@
+export interface Env {
+  DB: D1Database;
+  CACHE: KVNamespace;
+  AI: Ai;
+  PIPELINE: Workflow;
+  TWELVEDATA_API_KEY: string;
+  AI_MODEL: string;
+  AI_MIN_CONFIDENCE: string;
+  AI_MAX_PER_RUN: string;
+}
+
+/** Configuración del universo a ingerir. */
+export const SYMBOLS = ['EURUSD', 'GBPUSD', 'USDJPY'] as const;
+export const INTERVALS = ['5min', '15min', '30min', '45min', '1h'] as const;
+export const HISTORY_START = '2026-01-01';
+
+export type Symbol = (typeof SYMBOLS)[number];
+export type Interval = (typeof INTERVALS)[number];
+
+export const INTERVAL_MS: Record<Interval, number> = {
+  '5min': 5 * 60_000,
+  '15min': 15 * 60_000,
+  '30min': 30 * 60_000,
+  '45min': 45 * 60_000,
+  '1h': 60 * 60_000,
+};
+
+export interface Candle {
+  ts: number; // epoch ms UTC (apertura de la vela)
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
+export type Direction = 'buy' | 'sell';
+
+export interface DetectedSignal {
+  sigKey: string;
+  symbol: string;
+  interval: string;
+  ts: number;
+  pattern: string;
+  direction: Direction;
+  entry: number;
+  stop: number;
+  target: number;
+  rr: number;
+  confidence: number; // 0-100 determinista
+}
+
+export type Outcome = 'open' | 'tp_hit' | 'sl_hit' | 'expired';
+
+export interface SignalRow extends DetectedSignal {
+  outcome: Outcome;
+  outcomeTs: number | null;
+}
+
+/** Dossier determinista que se entrega a la IA (paso 3). */
+export interface SignalContext {
+  symbol: string;
+  interval: string;
+  detectedAt: string; // ISO
+  pattern: string;
+  direction: Direction;
+  entry: number;
+  stop: number;
+  target: number;
+  riskReward: number;
+  trendHigherTf: 'alcista' | 'bajista' | 'lateral';
+  ema200: 'precio por encima' | 'precio por debajo';
+  ema200Slope: 'ascendente' | 'descendente' | 'plana';
+  rsi14: number;
+  atrPct: number;           // ATR como % del precio
+  volumeTrend: 'creciente' | 'decreciente' | 'estable';
+  distanceToRecentHigh: number; // %
+  distanceToRecentLow: number;  // %
+  correlations: Record<string, number>; // vs otros pares del universo
+  recentOutcomes: { pattern: string; total: number; tpRate: number }[];
+  news: string | null;      // pendiente de proveedor de noticias
+  sentiment: string | null; // pendiente de proveedor de sentimiento
+}
+
+export interface AiVerdict {
+  action: 'buy' | 'sell' | 'skip';
+  confidence: number; // 0-100
+  thesis: string;
+  risks: string;
+  sentimentScore: number; // 0-5 valoración cualitativa de la IA
+  newsScore: number;      // 0-5
+}
+
+export interface ScoreBreakdown {
+  trend: number;        // 0-5
+  momentum: number;
+  volume: number;
+  volatility: number;
+  macro: number;
+  news: number;
+  sentiment: number;
+  institutional: number;
+  riskReward: number;
+}
