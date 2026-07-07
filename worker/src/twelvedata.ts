@@ -1,9 +1,11 @@
-import type { Candle } from './types';
+import { INTERVAL_MS, type Candle, type Interval } from './types';
 
 /* Cliente mínimo de Twelve Data (https://twelvedata.com/docs).
-   Endpoint time_series: OHLC por símbolo + intervalo.
-   Plan gratuito: 8 créditos/min y 800/día — el workflow espacia las
-   peticiones con step.sleep, aquí solo se hace 1 request por llamada. */
+   Nota de comportamiento: time_series devuelve las velas MÁS RECIENTES del
+   rango pedido, así que la paginación del backfill se hace con ventanas
+   [start_date, end_date] de tamaño <= outputsize velas — nunca con
+   start_date abierto. Plan gratuito: 8 créditos/min y 800/día; el workflow
+   espacia las peticiones con step.sleep. */
 
 const BASE = 'https://api.twelvedata.com';
 export const MAX_OUTPUT = 5000; // límite de outputsize por petición
@@ -11,6 +13,10 @@ export const MAX_OUTPUT = 5000; // límite de outputsize por petición
 /** EURUSD → EUR/USD (formato de símbolo de Twelve Data). */
 function tdSymbol(symbol: string): string {
   return `${symbol.slice(0, 3)}/${symbol.slice(3)}`;
+}
+
+function tdDate(ts: number): string {
+  return new Date(ts).toISOString().slice(0, 19).replace('T', ' ');
 }
 
 interface TdValue {
@@ -31,20 +37,28 @@ interface TdResponse {
 
 export interface FetchResult {
   candles: Candle[];
-  /** true si la respuesta vino llena → probablemente queda histórico por pedir */
+  /** fin de la ventana pedida: cursor de avance aunque no haya velas (huecos/fin de semana) */
+  windowEnd: number;
+  /** true si la ventana termina antes del presente → queda histórico por pedir */
   hasMore: boolean;
 }
 
 /**
- * Pide velas ASC desde `startTs` (exclusivo si es un cursor previo).
- * Lanza Error en fallos transitorios (429/5xx) para que el workflow reintente.
+ * Pide la ventana de velas [startTs, startTs + 5000·intervalo], acotada al presente.
+ * Lanza Error en fallos transitorios (429/5xx) para que el workflow reintente;
+ * "no hay datos en el rango" NO es un error (mercado cerrado, huecos).
  */
 export async function fetchSeries(
   apiKey: string,
   symbol: string,
-  interval: string,
+  interval: Interval,
   startTs: number,
 ): Promise<FetchResult> {
+  const stepMs = INTERVAL_MS[interval];
+  const now = Date.now();
+  const windowEnd = Math.min(startTs + MAX_OUTPUT * stepMs, now);
+  const hasMore = windowEnd < now - stepMs;
+
   const params = new URLSearchParams({
     symbol: tdSymbol(symbol),
     interval,
@@ -52,7 +66,8 @@ export async function fetchSeries(
     timezone: 'UTC',
     order: 'ASC',
     outputsize: String(MAX_OUTPUT),
-    start_date: new Date(startTs).toISOString().slice(0, 19).replace('T', ' '),
+    start_date: tdDate(startTs),
+    end_date: tdDate(windowEnd),
   });
 
   const res = await fetch(`${BASE}/time_series?${params}`);
@@ -65,6 +80,10 @@ export async function fetchSeries(
   if (body.status === 'error' || body.code) {
     // 429 llega a veces como body {code: 429} con HTTP 200
     if (body.code === 429) throw new Error(`Twelve Data rate limit: ${body.message}`);
+    // ventana sin datos (fin de semana, festivo, mercado cerrado) → no es fallo
+    if (body.code === 400 && /no data is available/i.test(body.message ?? '')) {
+      return { candles: [], windowEnd, hasMore };
+    }
     throw new Error(`Twelve Data error ${body.code}: ${body.message}`);
   }
 
@@ -80,5 +99,5 @@ export async function fetchSeries(
     .filter((c) => Number.isFinite(c.ts) && Number.isFinite(c.close))
     .sort((a, b) => a.ts - b.ts);
 
-  return { candles, hasMore: candles.length >= MAX_OUTPUT };
+  return { candles, windowEnd, hasMore };
 }

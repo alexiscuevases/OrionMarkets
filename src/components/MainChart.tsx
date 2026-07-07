@@ -37,6 +37,9 @@ export default function MainChart({
     const lastUp = last[4] >= last[1];
     const stepMs = candles[1][0] - candles[0][0];
 
+    // forex real no trae volumen (Twelve Data lo da a 0) → sin panel
+    const hasVolume = volume.some(([, v]) => v > 0);
+
     // el volumen hereda la dirección de su vela
     const volumeData = volume.map(([t, v], i) => ({
       x: t,
@@ -55,8 +58,9 @@ export default function MainChart({
           text: `<b>${s.pattern}</b><br/>Confianza ${s.confidence}% · ${fmtDateTime(s.time)}`,
         }));
 
-    const priceHeight = showRSI ? '56%' : '78%';
+    const priceHeight = showRSI ? (hasVolume ? '56%' : '68%') : hasVolume ? '78%' : '96%';
     const volTop = showRSI ? '58%' : '80%';
+    const rsiAxisIndex = hasVolume ? 2 : 1;
 
     const signalPlotLines: Highcharts.YAxisPlotLinesOptions[] = activeSignal
       ? [
@@ -107,9 +111,10 @@ export default function MainChart({
             }),
           };
 
-    const chartSeries: Highcharts.SeriesOptionsType[] = [
-      priceSeries,
-      {
+    const chartSeries: Highcharts.SeriesOptionsType[] = [priceSeries];
+
+    if (hasVolume) {
+      chartSeries.push({
         type: 'column',
         id: 'volume',
         name: 'Volumen',
@@ -117,8 +122,8 @@ export default function MainChart({
         yAxis: 1,
         borderWidth: 0,
         showInLegend: false,
-      },
-    ];
+      });
+    }
 
     if (showEMA) {
       chartSeries.push(
@@ -137,7 +142,7 @@ export default function MainChart({
 
     if (showRSI) {
       chartSeries.push({
-        type: 'rsi', linkedTo: 'price', yAxis: 2,
+        type: 'rsi', linkedTo: 'price', yAxis: rsiAxisIndex,
         name: 'RSI 14', color: ORION.series3, lineWidth: 1.4,
         marker: { enabled: false },
       });
@@ -225,19 +230,22 @@ export default function MainChart({
           ...signalPlotLines,
         ],
       },
-      {
+    ];
+
+    if (hasVolume) {
+      yAxes.push({
         // volumen
         top: volTop,
         height: '12%',
         labels: { enabled: false },
         gridLineWidth: 0,
-      },
-    ];
+      });
+    }
 
     if (showRSI) {
       yAxes.push({
-        top: '74%',
-        height: '26%',
+        top: hasVolume ? '74%' : '72%',
+        height: hasVolume ? '26%' : '28%',
         min: 0,
         max: 100,
         tickPositions: [30, 50, 70],

@@ -14,7 +14,7 @@ import { buildContext } from './enrich';
 import { evaluateSignal } from './ai';
 import { scoreSignal } from './scoring';
 import {
-  HISTORY_START, INTERVALS, SYMBOLS,
+  HISTORY_START, INTERVALS, INTERVAL_MS, SYMBOLS,
   type Env, type SignalContext, type AiVerdict,
 } from './types';
 
@@ -61,12 +61,30 @@ export class OrionPipeline extends WorkflowEntrypoint<Env, PipelineParams> {
             async () => {
               const cursor = await getCursor(db, symbol, interval);
               const startTs = cursor > 0 ? cursor + 1000 : Date.parse(`${HISTORY_START}T00:00:00Z`);
-              const { candles, hasMore } = await fetchSeries(
+              const { candles, windowEnd, hasMore } = await fetchSeries(
                 this.env.TWELVEDATA_API_KEY, symbol, interval, startTs,
               );
               if (candles.length > 0) {
                 await upsertCandles(db, symbol, interval, candles);
-                await setCursor(db, symbol, interval, candles[candles.length - 1].ts);
+              }
+              // avance del cursor:
+              // - ventana histórica: salta al fin de ventana aunque venga vacía
+              //   (huecos de fin de semana), o no repetiríamos nunca el hueco
+              // - ventana que llega al presente: retrocede una vela para
+              //   re-tomar en la próxima ejecución la vela aún en formación
+              let newCursor: number;
+              if (hasMore) {
+                newCursor = windowEnd;
+              } else if (candles.length > 0) {
+                newCursor = Math.max(
+                  cursor,
+                  candles[candles.length - 1].ts - INTERVAL_MS[interval],
+                );
+              } else {
+                newCursor = cursor;
+              }
+              if (newCursor !== cursor) {
+                await setCursor(db, symbol, interval, newCursor);
               }
               return { count: candles.length, hasMore };
             },
