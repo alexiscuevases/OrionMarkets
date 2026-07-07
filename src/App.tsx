@@ -14,7 +14,7 @@ export default function App() {
   const [strategies, setStrategies] = useState<Strategy[]>(STRATEGIES);
   const [activeSignal, setActiveSignal] = useState<AISignal | null>(null);
 
-  // serie + señales del par en pantalla (motor Cloudflare, con fallback simulado)
+  // serie + señales del par en pantalla, siempre desde el motor Cloudflare
   const market = useMarketData(symbol, tf);
   // oportunidades puntuadas por el escáner global
   const opportunities = useOpportunities();
@@ -61,6 +61,7 @@ export default function App() {
           series={market.series}
           signals={market.signals}
           live={market.live}
+          loading={market.loading}
         />
         <SidePanel
           strategies={strategies}

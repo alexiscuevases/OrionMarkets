@@ -1,12 +1,12 @@
 import { api, type ApiSignal } from '../api/client';
 import {
-  getScannerSignals, getSeries, getSignals, pairBySymbol, quoteFromCandles,
+  pairBySymbol, quoteFromCandles,
   type AISignal, type Quote, type SeriesData,
 } from './market';
 
-/* Capa de datos: usa el motor de Cloudflare cuando hay datos reales y cae
-   al simulador determinista en cualquier otro caso (par/TF fuera del
-   universo ingerido, API caída o histórico aún vacío). */
+/* Capa de datos: todo sale del motor de Cloudflare (Twelve Data + D1).
+   Si el par/TF está fuera del universo ingerido, la API cae o el histórico
+   está vacío, se devuelve un resultado vacío y la UI muestra ese estado. */
 
 /** Temporalidades de la UI ↔ intervalos de Twelve Data en el motor. */
 const TF_TO_INTERVAL: Record<string, string> = {
@@ -16,61 +16,53 @@ const TF_TO_INTERVAL: Record<string, string> = {
   H1: '1h',
 };
 
-const LIVE_SYMBOLS = new Set(['EURUSD', 'GBPUSD', 'USDJPY']);
-const MIN_LIVE_CANDLES = 60; // menos que esto → el gráfico no es útil, usar mock
+export const LIVE_SYMBOLS = new Set(['EURUSD', 'GBPUSD', 'USDJPY']);
+export const LIVE_TFS = Object.keys(TF_TO_INTERVAL);
 
 export function isLiveCapable(symbol: string, tf: string): boolean {
   return LIVE_SYMBOLS.has(symbol) && tf in TF_TO_INTERVAL;
 }
 
 export interface MarketData {
-  series: SeriesData;
+  series: SeriesData | null;
   signals: AISignal[];
   live: boolean;
 }
 
-/** Serie + señales coherentes entre sí (nunca velas reales con señales mock). */
-export async function loadMarketData(symbol: string, tf: string): Promise<MarketData> {
-  if (isLiveCapable(symbol, tf)) {
-    const interval = TF_TO_INTERVAL[tf];
-    try {
-      const [candlesRes, signalsRes] = await Promise.all([
-        api.candles(symbol, interval, 800),
-        api.signals(symbol, interval, 60),
-      ]);
-      if (candlesRes.candles.length >= MIN_LIVE_CANDLES) {
-        return {
-          series: {
-            candles: candlesRes.candles.map((c) => [c.ts, c.open, c.high, c.low, c.close]),
-            volume: candlesRes.candles.map((c) => [c.ts, c.volume]),
-          },
-          signals: signalsRes.signals.map((s) => adaptSignal(s, tf)),
-          live: true,
-        };
-      }
-    } catch {
-      // API caída o sin datos → simulador
-    }
-  }
+const EMPTY: MarketData = { series: null, signals: [], live: false };
 
-  return {
-    series: getSeries(symbol, tf),
-    signals: getSignals(symbol, tf).slice().reverse(),
-    live: false,
-  };
+/** Serie + señales del motor; vacío si no hay cobertura o la API falla. */
+export async function loadMarketData(symbol: string, tf: string): Promise<MarketData> {
+  if (!isLiveCapable(symbol, tf)) return EMPTY;
+
+  const interval = TF_TO_INTERVAL[tf];
+  try {
+    const [candlesRes, signalsRes] = await Promise.all([
+      api.candles(symbol, interval, 800),
+      api.signals(symbol, interval, 60),
+    ]);
+    if (candlesRes.candles.length < 2) return EMPTY;
+    return {
+      series: {
+        candles: candlesRes.candles.map((c) => [c.ts, c.open, c.high, c.low, c.close]),
+        volume: candlesRes.candles.map((c) => [c.ts, c.volume]),
+      },
+      signals: signalsRes.signals.map((s) => adaptSignal(s, tf)),
+      live: true,
+    };
+  } catch {
+    return EMPTY;
+  }
 }
 
-/** Mejores oportunidades puntuadas por el motor; mock si no hay ninguna. */
+/** Mejores oportunidades puntuadas por el motor; lista vacía si no responde. */
 export async function loadOpportunities(): Promise<{ signals: AISignal[]; live: boolean }> {
   try {
     const res = await api.opportunities(24);
-    if (res.opportunities.length > 0) {
-      return { signals: res.opportunities.map((s) => adaptSignal(s)), live: true };
-    }
+    return { signals: res.opportunities.map((s) => adaptSignal(s)), live: true };
   } catch {
-    // sin conexión → escáner simulado
+    return { signals: [], live: false };
   }
-  return { signals: getScannerSignals(), live: false };
 }
 
 /** Cotización real para la watchlist (null si no hay datos suficientes). */

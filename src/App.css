@@ -231,6 +231,12 @@
 
 .seg__btn:hover { color: var(--ink-hi); }
 
+.seg__btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.seg__btn:disabled:hover { color: var(--ink-mid); }
+
 .seg__btn--on {
   background: var(--bg-raised);
   color: var(--star);
@@ -431,6 +437,8 @@
 
 .wrow:hover { background: var(--bg-hover); }
 
+.wrow--nodata { opacity: 0.55; }
+
 .wrow--on {
   background: var(--bg-raised);
   border-color: var(--line-hair);
@@ -538,6 +546,12 @@
 
 .trade-btn .num { font-size: 11.5px; font-weight: 600; letter-spacing: 0; }
 
+.trade-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  filter: none;
+}
+
 .trade-btn--buy {
   background: var(--buy);
   color: #fff;
@@ -607,6 +621,17 @@
 }
 
 .main-chart { width: 100%; height: 100%; }
+
+/* Cuerpo del gráfico sin datos del motor */
+.chart-empty {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: var(--ink-low);
+  font-size: 11.5px;
+}
 
 /* ---------------- Panel lateral ---------------- */
 

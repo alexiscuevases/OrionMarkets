@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { PAIRS, getQuote, fmtPct, type Group, type Quote } from '../data/market';
+import { PAIRS, fmtPct, type Group, type Quote } from '../data/market';
 import { loadLiveQuote } from '../data/live';
 import Sparkline from './Sparkline';
 import { SearchIcon } from './icons';
@@ -46,10 +46,11 @@ export default function Watchlist({ selected, onSelect }: Props) {
           p.name.toLowerCase().includes(query.toLowerCase())),
     ).map((p) => ({
       pair: p,
-      quote: liveQuotes[p.symbol] ?? getQuote(p.symbol),
-      live: p.symbol in liveQuotes,
+      quote: liveQuotes[p.symbol] ?? null,
     }));
   }, [group, query, liveQuotes]);
+
+  const liveCount = rows.filter((r) => r.quote !== null).length;
 
   return (
     <aside className="watchlist panel">
@@ -75,35 +76,44 @@ export default function Watchlist({ selected, onSelect }: Props) {
       </div>
 
       <div className="watchlist__rows">
-        {rows.map(({ pair, quote, live }) => {
-          const up = quote.changePct >= 0;
+        {rows.map(({ pair, quote }) => {
+          const up = (quote?.changePct ?? 0) >= 0;
           return (
             <button
               key={pair.symbol}
-              className={`wrow ${selected === pair.symbol ? 'wrow--on' : ''}`}
+              className={`wrow ${selected === pair.symbol ? 'wrow--on' : ''} ${quote ? '' : 'wrow--nodata'}`}
               onClick={() => onSelect(pair.symbol)}
             >
               <div className="wrow__id">
                 <span className="wrow__sym">
                   {pair.base}
                   <em>/{pair.quote}</em>
-                  {live && <i className="live-dot" title="Datos del motor" />}
+                  {quote && <i className="live-dot" title="Datos del motor" />}
                 </span>
                 <span className="wrow__name">{pair.name}</span>
               </div>
-              <Sparkline
-                data={quote.spark}
-                stroke={up ? 'var(--buy)' : 'var(--sell)'}
-                fill={up ? 'var(--buy-glow)' : 'var(--sell-glow)'}
-                width={64}
-                height={22}
-              />
-              <div className="wrow__quote">
-                <span className="wrow__price num">{quote.bid.toFixed(pair.decimals)}</span>
-                <span className={`chip num ${up ? 'chip--buy' : 'chip--sell'}`}>
-                  {up ? '▲' : '▼'} {fmtPct(quote.changePct)}
-                </span>
-              </div>
+              {quote ? (
+                <>
+                  <Sparkline
+                    data={quote.spark}
+                    stroke={up ? 'var(--buy)' : 'var(--sell)'}
+                    fill={up ? 'var(--buy-glow)' : 'var(--sell-glow)'}
+                    width={64}
+                    height={22}
+                  />
+                  <div className="wrow__quote">
+                    <span className="wrow__price num">{quote.bid.toFixed(pair.decimals)}</span>
+                    <span className={`chip num ${up ? 'chip--buy' : 'chip--sell'}`}>
+                      {up ? '▲' : '▼'} {fmtPct(quote.changePct)}
+                    </span>
+                  </div>
+                </>
+              ) : (
+                <div className="wrow__quote">
+                  <span className="wrow__price num dim">—</span>
+                  <span className="chip chip--ghost">sin datos</span>
+                </div>
+              )}
             </button>
           );
         })}
@@ -113,7 +123,7 @@ export default function Watchlist({ selected, onSelect }: Props) {
         <span className="belt-dots" aria-hidden="true">
           <i /><i /><i />
         </span>
-        {rows.length} instrumentos · datos simulados
+        {liveCount} de {rows.length} instrumentos con datos del motor
       </div>
     </aside>
   );

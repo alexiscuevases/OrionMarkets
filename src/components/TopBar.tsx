@@ -26,7 +26,7 @@ export default function TopBar() {
         <span className={`topbar__env ${engine.status === 'online' ? 'topbar__env--live' : ''}`}>
           {engine.status === 'online'
             ? `MOTOR EN VIVO${engine.lastRun ? ` · ${new Date(engine.lastRun).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}` : ''}`
-            : 'TERMINAL FX · DEMO'}
+            : 'MOTOR SIN CONEXIÓN'}
         </span>
       </div>
 
@@ -51,7 +51,6 @@ export default function TopBar() {
         </div>
         <button className="icon-btn" title="Alertas">
           <BellIcon size={15} />
-          <span className="icon-btn__badge">3</span>
         </button>
         <button className="icon-btn" title="Ajustes">
           <GearIcon size={15} />

@@ -4,6 +4,7 @@ import {
   TIMEFRAMES, pairBySymbol, quoteFromCandles, fmtPct, fmtPips,
   type AISignal, type SeriesData,
 } from '../data/market';
+import { isLiveCapable } from '../data/live';
 import {
   AreaIcon, CandlesIcon, LayersIcon, LineIcon, OhlcIcon, SparkleIcon,
 } from './icons';
@@ -13,9 +14,10 @@ interface Props {
   tf: string;
   onTfChange: (tf: string) => void;
   activeSignal: AISignal | null;
-  series: SeriesData;
+  series: SeriesData | null;
   signals: AISignal[];
   live: boolean;
+  loading: boolean;
 }
 
 const KINDS: { id: ChartKind; label: string; icon: typeof CandlesIcon }[] = [
@@ -26,7 +28,7 @@ const KINDS: { id: ChartKind; label: string; icon: typeof CandlesIcon }[] = [
 ];
 
 export default function ChartPanel({
-  symbol, tf, onTfChange, activeSignal, series, signals, live,
+  symbol, tf, onTfChange, activeSignal, series, signals, live, loading,
 }: Props) {
   const [kind, setKind] = useState<ChartKind>('candlestick');
   const [showSignals, setShowSignals] = useState(true);
@@ -35,13 +37,14 @@ export default function ChartPanel({
 
   const pair = pairBySymbol(symbol);
   const tfMinutes = TIMEFRAMES.find((t) => t.id === tf)?.minutes ?? 60;
-  const quote = quoteFromCandles(symbol, series.candles, tfMinutes);
-  const up = quote.changePct >= 0;
+  const hasData = series !== null && series.candles.length >= 2;
+  const quote = hasData ? quoteFromCandles(symbol, series.candles, tfMinutes) : null;
+  const up = (quote?.changePct ?? 0) >= 0;
 
   // el último dígito significativo del precio se resalta como "pipeta"
-  const bid = quote.bid.toFixed(pair.decimals);
-  const bidHead = bid.slice(0, -1);
-  const bidPip = bid.slice(-1);
+  const bid = quote?.bid.toFixed(pair.decimals);
+  const bidHead = bid?.slice(0, -1);
+  const bidPip = bid?.slice(-1);
 
   return (
     <section className="chart-panel panel">
@@ -54,46 +57,52 @@ export default function ChartPanel({
           <span className="chart-head__name">
             {pair.name} · Forex
             <span className={`src-badge ${live ? 'src-badge--live' : ''}`}>
-              {live ? '● EN VIVO' : '○ SIMULADO'}
+              {live ? '● EN VIVO' : loading ? '◌ CARGANDO' : '○ SIN DATOS'}
             </span>
           </span>
         </div>
 
         <div className="chart-head__quote">
-          <div className={`bigprice num ${up ? 'bigprice--up' : 'bigprice--down'}`}>
-            {bidHead}
-            <sup>{bidPip}</sup>
-          </div>
-          <div className="chart-head__meta">
-            <span className={`chip num ${up ? 'chip--buy' : 'chip--sell'}`}>
-              {up ? '▲' : '▼'} {fmtPct(quote.changePct)} · {fmtPips(quote.changePips)} pips
-            </span>
-            <span className="kv num">
-              <label>Venta</label> {quote.bid.toFixed(pair.decimals)}
-            </span>
-            <span className="kv num">
-              <label>Compra</label> {quote.ask.toFixed(pair.decimals)}
-            </span>
-            <span className="kv num">
-              <label>Spread</label> {pair.spread.toFixed(1)}
-            </span>
-            <span className="kv num">
-              <label>Máx</label> {quote.high.toFixed(pair.decimals)}
-            </span>
-            <span className="kv num">
-              <label>Mín</label> {quote.low.toFixed(pair.decimals)}
-            </span>
-          </div>
+          {quote ? (
+            <>
+              <div className={`bigprice num ${up ? 'bigprice--up' : 'bigprice--down'}`}>
+                {bidHead}
+                <sup>{bidPip}</sup>
+              </div>
+              <div className="chart-head__meta">
+                <span className={`chip num ${up ? 'chip--buy' : 'chip--sell'}`}>
+                  {up ? '▲' : '▼'} {fmtPct(quote.changePct)} · {fmtPips(quote.changePips)} pips
+                </span>
+                <span className="kv num">
+                  <label>Venta</label> {quote.bid.toFixed(pair.decimals)}
+                </span>
+                <span className="kv num">
+                  <label>Compra</label> {quote.ask.toFixed(pair.decimals)}
+                </span>
+                <span className="kv num">
+                  <label>Spread</label> {pair.spread.toFixed(1)}
+                </span>
+                <span className="kv num">
+                  <label>Máx</label> {quote.high.toFixed(pair.decimals)}
+                </span>
+                <span className="kv num">
+                  <label>Mín</label> {quote.low.toFixed(pair.decimals)}
+                </span>
+              </div>
+            </>
+          ) : (
+            <div className="bigprice num">—</div>
+          )}
         </div>
 
         <div className="chart-head__trade">
-          <button className="trade-btn trade-btn--sell">
+          <button className="trade-btn trade-btn--sell" disabled={!quote}>
             <span>VENDER</span>
-            <span className="num">{quote.bid.toFixed(pair.decimals)}</span>
+            <span className="num">{quote ? quote.bid.toFixed(pair.decimals) : '—'}</span>
           </button>
-          <button className="trade-btn trade-btn--buy">
+          <button className="trade-btn trade-btn--buy" disabled={!quote}>
             <span>COMPRAR</span>
-            <span className="num">{quote.ask.toFixed(pair.decimals)}</span>
+            <span className="num">{quote ? quote.ask.toFixed(pair.decimals) : '—'}</span>
           </button>
         </div>
       </div>
@@ -104,6 +113,8 @@ export default function ChartPanel({
             <button
               key={t.id}
               className={`seg__btn num ${tf === t.id ? 'seg__btn--on' : ''}`}
+              disabled={!isLiveCapable(symbol, t.id)}
+              title={isLiveCapable(symbol, t.id) ? undefined : 'Sin cobertura del motor'}
               onClick={() => onTfChange(t.id)}
             >
               {t.label}
@@ -158,17 +169,30 @@ export default function ChartPanel({
       </div>
 
       <div className="chart-body">
-        <MainChart
-          symbol={symbol}
-          tf={tf}
-          kind={kind}
-          showSignals={showSignals}
-          showEMA={showEMA}
-          showRSI={showRSI}
-          activeSignal={activeSignal}
-          series={series}
-          signals={signals}
-        />
+        {hasData ? (
+          <MainChart
+            symbol={symbol}
+            tf={tf}
+            kind={kind}
+            showSignals={showSignals}
+            showEMA={showEMA}
+            showRSI={showRSI}
+            activeSignal={activeSignal}
+            series={series}
+            signals={signals}
+          />
+        ) : (
+          <div className="chart-empty">
+            <span className="belt-dots" aria-hidden="true">
+              <i /><i /><i />
+            </span>
+            {loading
+              ? `Cargando ${symbol} ${tf} desde el motor…`
+              : isLiveCapable(symbol, tf)
+                ? `El motor aún no tiene histórico de ${symbol} en ${tf}`
+                : `${symbol} ${tf} está fuera del universo del motor`}
+          </div>
+        )}
       </div>
     </section>
   );

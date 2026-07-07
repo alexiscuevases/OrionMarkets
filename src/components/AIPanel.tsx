@@ -1,6 +1,8 @@
 import {
-  fmtDateTime, pairBySymbol, type AISignal,
+  fmtDateTime, fmtTime, pairBySymbol, type AISignal,
 } from '../data/market';
+import { LIVE_SYMBOLS, LIVE_TFS } from '../data/live';
+import { useEngineStatus } from '../hooks/useMarketData';
 import { ArrowDown, ArrowUp, SparkleIcon, TargetIcon } from './icons';
 
 interface Props {
@@ -30,25 +32,42 @@ function scoreTitle(scores?: Record<string, number> | null): string | undefined 
 }
 
 export default function AIPanel({ signals, onView, activeSignalId }: Props) {
+  const engine = useEngineStatus();
+  const online = engine.status === 'online';
+
   return (
     <div className="side-scroll">
       <div className="ai-scanner">
         <div className="ai-scanner__head">
           <SparkleIcon size={14} />
           <b>Escáner de patrones</b>
-          <span className="ai-scanner__live">
-            EN VIVO<span className="ai-pill__dot" />
-          </span>
+          {online && (
+            <span className="ai-scanner__live">
+              EN VIVO<span className="ai-pill__dot" />
+            </span>
+          )}
         </div>
         <p>
-          Modelo <b>orion-fx-v2</b> analizando <b className="num">14</b> pares en M15 · H1 · H4.
-          Cruza patrones detectados con tus estrategias activas.
+          Motor analizando <b className="num">{LIVE_SYMBOLS.size}</b> pares
+          ({[...LIVE_SYMBOLS].join(' · ')}) en {LIVE_TFS.join(' · ')}.
         </p>
-        <div className="ai-scanner__bar">
-          <span style={{ width: '68%' }} />
+        <div className="ai-scanner__foot num">
+          {online
+            ? engine.lastRun
+              ? `Última pasada ${fmtTime(new Date(engine.lastRun).getTime())}`
+              : 'Motor en línea'
+            : 'Motor sin conexión'}
         </div>
-        <div className="ai-scanner__foot num">Última pasada hace 12 s · siguiente en 48 s</div>
       </div>
+
+      {signals.length === 0 && (
+        <div className="bottom__empty">
+          <span className="belt-dots" aria-hidden="true">
+            <i /><i /><i />
+          </span>
+          Sin señales del motor todavía
+        </div>
+      )}
 
       {signals.map((s) => {
         const pair = pairBySymbol(s.symbol);
@@ -80,7 +99,7 @@ export default function AIPanel({ signals, onView, activeSignalId }: Props) {
 
             <div className="signal__pattern" title={s.aiThesis ?? undefined}>
               <span>Patrón: <b>{s.pattern}</b></span>
-              <span className="signal__strategy">{s.live ? s.strategy : `vía ${s.strategy}`}</span>
+              <span className="signal__strategy">{s.strategy}</span>
             </div>
 
             <div className="conf">

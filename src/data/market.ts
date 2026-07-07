@@ -1,6 +1,6 @@
-/* Datos simulados del mercado FX.
-   Todo es determinista (RNG con semilla por par + temporalidad) para que
-   la maqueta sea estable entre recargas. */
+/* Catálogo estático del terminal (pares, temporalidades, sesiones) y
+   utilidades de formato. Los datos de mercado vienen siempre del motor
+   (ver ./live.ts); aquí no se genera ningún dato simulado. */
 
 export type Group = 'Mayores' | 'Menores' | 'Exóticos';
 
@@ -56,7 +56,8 @@ export const TIMEFRAMES: Timeframe[] = [
   { id: 'W1', label: 'W1', minutes: 10080, candles: 260 },
 ];
 
-/* ---------------- RNG con semilla ---------------- */
+/* ---------------- RNG con semilla ----------------
+   Solo se usa para las mini-curvas decorativas del catálogo de estrategias. */
 
 function hashSeed(str: string): number {
   let h = 2166136261;
@@ -78,71 +79,13 @@ function mulberry32(seed: number) {
   };
 }
 
-/* ---------------- Generador de velas ---------------- */
+/* ---------------- Series de velas ---------------- */
 
 export type Candle = [number, number, number, number, number]; // t, o, h, l, c
 
 export interface SeriesData {
   candles: Candle[];
   volume: [number, number][];
-}
-
-const seriesCache = new Map<string, SeriesData>();
-
-/** Paseo aleatorio con regímenes de tendencia y mechas realistas. */
-export function getSeries(symbol: string, tfId: string): SeriesData {
-  const key = `${symbol}:${tfId}`;
-  const cached = seriesCache.get(key);
-  if (cached) return cached;
-
-  const pair = pairBySymbol(symbol);
-  const tf = TIMEFRAMES.find((t) => t.id === tfId) ?? TIMEFRAMES[4];
-  const rnd = mulberry32(hashSeed(key));
-
-  const stepMs = tf.minutes * 60_000;
-  const now = Math.floor(Date.now() / stepMs) * stepMs;
-  const start = now - stepMs * (tf.candles - 1);
-
-  // volatilidad por vela ~ raíz del tiempo
-  const vol = pair.price * 0.0011 * Math.sqrt(tf.minutes / 60);
-
-  const candles: Candle[] = [];
-  const volume: [number, number][] = [];
-
-  let price = pair.price * (0.97 + rnd() * 0.05);
-  let drift = 0;
-
-  for (let i = 0; i < tf.candles; i++) {
-    // cambio de régimen ocasional: tendencia alcista, bajista o rango
-    if (i % 36 === 0 || rnd() < 0.02) {
-      drift = (rnd() - 0.5) * vol * 0.9;
-    }
-    // reversión suave hacia el ancla para no derivar al infinito
-    const pull = (pair.price - price) * 0.004;
-
-    const o = price;
-    const body = (rnd() - 0.5) * 2 * vol + drift + pull;
-    const c = o + body;
-    const wickUp = Math.abs((rnd() + rnd()) * 0.5 * vol * 0.9);
-    const wickDown = Math.abs((rnd() + rnd()) * 0.5 * vol * 0.9);
-    const h = Math.max(o, c) + wickUp;
-    const l = Math.min(o, c) - wickDown;
-    const t = start + i * stepMs;
-
-    candles.push([
-      t,
-      round(o, pair.decimals),
-      round(h, pair.decimals),
-      round(l, pair.decimals),
-      round(c, pair.decimals),
-    ]);
-    volume.push([t, Math.round(400 + rnd() * 2400 + Math.abs(body / vol) * 1600)]);
-    price = c;
-  }
-
-  const data = { candles, volume };
-  seriesCache.set(key, data);
-  return data;
 }
 
 function round(v: number, d: number): number {
@@ -163,11 +106,7 @@ export interface Quote {
   spark: number[];     // cierres recientes para sparkline
 }
 
-export function getQuote(symbol: string): Quote {
-  return quoteFromCandles(symbol, getSeries(symbol, 'H1').candles, 60);
-}
-
-/** Cotización derivada de cualquier serie de velas (mock o del motor). */
+/** Cotización derivada de una serie de velas del motor. */
 export function quoteFromCandles(
   symbol: string,
   candles: Candle[],
@@ -275,92 +214,15 @@ export interface AISignal {
   strategy: string;
   confidence: number;   // 0-100
   time: number;         // timestamp de la vela
-  candleIndex?: number; // índice sobre la serie del tf (solo señales simuladas)
   entry: number;
   stop: number;
   target: number;
   status: 'Activa' | 'Pendiente' | 'Cerrada';
   resultPips?: number;
-  /* campos presentes solo cuando la señal viene del motor real */
   live?: boolean;
   overallScore?: number | null;    // 0-100 del sistema de scoring
   scores?: Record<string, number> | null; // desglose 0-5 por dimensión
   aiThesis?: string | null;
-}
-
-const PATTERNS: { name: string; dir: Direction }[] = [
-  { name: 'Doble suelo', dir: 'buy' },
-  { name: 'Bandera alcista', dir: 'buy' },
-  { name: 'Envolvente alcista', dir: 'buy' },
-  { name: 'Pin bar en soporte', dir: 'buy' },
-  { name: 'Ruptura de rango', dir: 'buy' },
-  { name: 'Hombro-cabeza-hombro', dir: 'sell' },
-  { name: 'Envolvente bajista', dir: 'sell' },
-  { name: 'Doble techo', dir: 'sell' },
-  { name: 'Divergencia bajista RSI', dir: 'sell' },
-];
-
-const signalCache = new Map<string, AISignal[]>();
-
-/** Señales deterministas ancladas a velas reales de la serie. */
-export function getSignals(symbol: string, tfId: string): AISignal[] {
-  const key = `${symbol}:${tfId}`;
-  const cached = signalCache.get(key);
-  if (cached) return cached;
-
-  const pair = pairBySymbol(symbol);
-  const { candles } = getSeries(symbol, tfId);
-  const rnd = mulberry32(hashSeed('signals:' + key));
-  const count = 5;
-  const out: AISignal[] = [];
-
-  for (let i = 0; i < count; i++) {
-    // señales repartidas por el último tercio de la serie
-    const idx = Math.floor(candles.length * (0.55 + (i / count) * 0.42) + rnd() * 8);
-    const candle = candles[Math.min(idx, candles.length - 1)];
-    const pat = PATTERNS[Math.floor(rnd() * PATTERNS.length)];
-    const entry = candle[4];
-    const risk = pair.pip * (18 + rnd() * 30);
-    const rr = 1.5 + rnd() * 1.4;
-    const sign = pat.dir === 'buy' ? 1 : -1;
-    const isLast = i === count - 1;
-
-    out.push({
-      id: `${key}:${i}`,
-      symbol,
-      tf: tfId,
-      direction: pat.dir,
-      pattern: pat.name,
-      strategy: STRATEGIES[Math.floor(rnd() * STRATEGIES.length)].name,
-      confidence: Math.round(62 + rnd() * 32),
-      time: candle[0],
-      candleIndex: Math.min(idx, candles.length - 1),
-      entry,
-      stop: roundTo(entry - sign * risk, pair.decimals),
-      target: roundTo(entry + sign * risk * rr, pair.decimals),
-      status: isLast ? 'Activa' : i === count - 2 ? 'Pendiente' : 'Cerrada',
-      resultPips: isLast || i === count - 2 ? undefined : Math.round((rnd() - 0.3) * 90),
-    });
-  }
-
-  signalCache.set(key, out);
-  return out;
-}
-
-function roundTo(v: number, d: number): number {
-  const f = 10 ** d;
-  return Math.round(v * f) / f;
-}
-
-/** Señales de todos los pares para el escáner (tabla inferior / panel IA). */
-export function getScannerSignals(): AISignal[] {
-  const tfs = ['M15', 'H1', 'H4'];
-  const all: AISignal[] = [];
-  for (const p of PAIRS.slice(0, 10)) {
-    const tf = tfs[hashSeed(p.symbol) % tfs.length];
-    all.push(...getSignals(p.symbol, tf).slice(-2));
-  }
-  return all.sort((a, b) => b.time - a.time).slice(0, 12);
 }
 
 /* ---------------- Sesiones de mercado ---------------- */

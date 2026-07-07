@@ -31,6 +31,14 @@ export default function BottomPanel({ signals, onView }: Props) {
       </nav>
 
       {tab === 'Oportunidades detectadas' ? (
+        signals.length === 0 ? (
+          <div className="bottom__empty">
+            <span className="belt-dots" aria-hidden="true">
+              <i /><i /><i />
+            </span>
+            El motor aún no ha puntuado oportunidades
+          </div>
+        ) : (
         <div className="bottom__scroll">
           <table className="grid-table">
             <thead>
@@ -113,12 +121,13 @@ export default function BottomPanel({ signals, onView }: Props) {
             </tbody>
           </table>
         </div>
+        )
       ) : (
         <div className="bottom__empty">
           <span className="belt-dots" aria-hidden="true">
             <i /><i /><i />
           </span>
-          Sin datos en «{tab}» — vista de demostración
+          Sin datos en «{tab}»
         </div>
       )}
     </section>
