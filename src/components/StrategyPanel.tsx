@@ -1,5 +1,5 @@
 import Sparkline from './Sparkline';
-import type { Strategy } from '../data/market';
+import type { Strategy } from '../data/strategies';
 
 interface Props {
   strategies: Strategy[];
@@ -12,6 +12,13 @@ const RISK_TONE: Record<Strategy['risk'], string> = {
   Alto: 'chip--sell',
 };
 
+/* Rendimiento real del motor (últimos 30 días). Sin cierres suficientes
+   se muestra «—» en lugar de inventar números. */
+function fmtFactor(pf: number | null): string {
+  if (pf === null) return '—';
+  return Number.isFinite(pf) ? pf.toFixed(2) : '∞';
+}
+
 export default function StrategyPanel({ strategies, onToggle }: Props) {
   const activeCount = strategies.filter((s) => s.active).length;
 
@@ -21,11 +28,15 @@ export default function StrategyPanel({ strategies, onToggle }: Props) {
         <span>
           <b className="num">{activeCount}</b> de <b className="num">{strategies.length}</b> estrategias activas
         </span>
-        <span className="side-summary__hint">Las activas generan señales en tiempo real</span>
+        <span className="side-summary__hint">
+          Solo las activas aparecen en el gráfico y en oportunidades · stats reales 30d
+        </span>
       </div>
 
       {strategies.map((s) => {
-        const positive = s.equity[s.equity.length - 1] >= 0;
+        const st = s.stats;
+        const equity = st?.equity ?? [];
+        const positive = (equity[equity.length - 1] ?? 0) >= 0;
         return (
           <article key={s.id} className={`strat ${s.active ? 'strat--on' : ''}`}>
             <header className="strat__head">
@@ -53,18 +64,27 @@ export default function StrategyPanel({ strategies, onToggle }: Props) {
             <footer className="strat__stats">
               <div className="stat">
                 <label>Acierto</label>
-                <b className="num">{s.winRate}%</b>
+                <b
+                  className="num"
+                  title={st ? `${st.wins} TP · ${st.losses} SL en 30 días` : 'Sin datos del motor'}
+                >
+                  {st?.winRate != null ? `${st.winRate}%` : '—'}
+                </b>
               </div>
               <div className="stat">
                 <label>Factor</label>
-                <b className="num">{s.profitFactor.toFixed(2)}</b>
+                <b className="num" title="Beneficio bruto en R / nº de stops">
+                  {fmtFactor(st?.profitFactor ?? null)}
+                </b>
               </div>
               <div className="stat">
                 <label>Señales 30d</label>
-                <b className="num">{s.signals30d}</b>
+                <b className="num" title={st ? `${st.open} aún abiertas` : undefined}>
+                  {st ? st.signals30d : '—'}
+                </b>
               </div>
               <Sparkline
-                data={s.equity}
+                data={equity}
                 width={76}
                 height={26}
                 stroke={positive ? 'var(--buy)' : 'var(--sell)'}
@@ -74,8 +94,6 @@ export default function StrategyPanel({ strategies, onToggle }: Props) {
           </article>
         );
       })}
-
-      <button className="ghost-btn">+ Crear estrategia personalizada</button>
     </div>
   );
 }

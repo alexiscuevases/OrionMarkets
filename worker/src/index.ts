@@ -104,6 +104,33 @@ export default {
       return json({ signals: results });
     }
 
+    /* --- rendimiento real por patrón para el panel de estrategias ---
+       agregados de la ventana pedida + cierres ordenados para reconstruir
+       la curva de resultados en múltiplos de R (TP = +rr, SL = -1) */
+    if (pathname === '/api/strategies') {
+      const days = Math.min(Math.max(Number(searchParams.get('days')) || 30, 1), 90);
+      const since = Date.now() - days * 86_400_000;
+      const [aggs, closed] = await env.DB.batch([
+        env.DB.prepare(
+          `SELECT pattern,
+                  COUNT(*) AS total,
+                  SUM(CASE WHEN outcome = 'open' THEN 1 ELSE 0 END) AS open,
+                  SUM(CASE WHEN outcome = 'tp_hit' THEN 1 ELSE 0 END) AS tp,
+                  SUM(CASE WHEN outcome = 'sl_hit' THEN 1 ELSE 0 END) AS sl,
+                  SUM(CASE WHEN outcome = 'expired' THEN 1 ELSE 0 END) AS expired,
+                  SUM(CASE WHEN outcome = 'tp_hit' THEN rr ELSE 0 END) AS grossR
+           FROM signals WHERE ts >= ? GROUP BY pattern`,
+        ).bind(since),
+        env.DB.prepare(
+          `SELECT pattern, outcome, rr, outcome_ts AS outcomeTs
+           FROM signals
+           WHERE outcome IN ('tp_hit', 'sl_hit') AND outcome_ts >= ?
+           ORDER BY outcome_ts ASC LIMIT 2000`,
+        ).bind(since),
+      ]);
+      return json({ days, patterns: aggs.results, closed: closed.results });
+    }
+
     /* --- mejores oportunidades puntuadas --- */
     if (pathname === '/api/opportunities') {
       const limit = Math.min(Number(searchParams.get('limit')) || 20, 100);

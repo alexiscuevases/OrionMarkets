@@ -3,6 +3,7 @@ import {
   pairBySymbol, quoteFromCandles,
   type AISignal, type Quote, type SeriesData,
 } from './market';
+import { strategyIdForPattern, type StrategyStats } from './strategies';
 
 /* Capa de datos: todo sale del motor de Cloudflare (Twelve Data + D1).
    Si el par/TF está fuera del universo ingerido, la API cae o el histórico
@@ -63,6 +64,64 @@ export async function loadOpportunities(): Promise<{ signals: AISignal[]; live: 
     return { signals: res.opportunities.map((s) => adaptSignal(s)), live: true };
   } catch {
     return { signals: [], live: false };
+  }
+}
+
+/** Rendimiento real por estrategia agregado desde /api/strategies.
+    Los agregados por patrón del motor se pliegan a su estrategia (varios
+    patrones pueden pertenecer al mismo detector) y la curva se reconstruye
+    en múltiplos de R: cada TP suma su rr, cada SL resta 1. */
+export async function loadStrategyStats(): Promise<{
+  byId: Map<string, StrategyStats>;
+  live: boolean;
+}> {
+  const byId = new Map<string, StrategyStats>();
+  const ensure = (id: string): StrategyStats => {
+    let s = byId.get(id);
+    if (!s) {
+      s = {
+        signals30d: 0, open: 0, wins: 0, losses: 0,
+        winRate: null, profitFactor: null, equity: [],
+      };
+      byId.set(id, s);
+    }
+    return s;
+  };
+
+  try {
+    const res = await api.strategies(30);
+    const grossR = new Map<string, number>();
+
+    for (const p of res.patterns) {
+      const id = strategyIdForPattern(p.pattern);
+      if (!id) continue;
+      const s = ensure(id);
+      s.signals30d += p.total;
+      s.open += p.open;
+      s.wins += p.tp;
+      s.losses += p.sl;
+      grossR.set(id, (grossR.get(id) ?? 0) + p.grossR);
+    }
+
+    for (const c of res.closed) {
+      const id = strategyIdForPattern(c.pattern);
+      if (!id) continue;
+      const s = ensure(id);
+      const r = c.outcome === 'tp_hit' ? c.rr : -1;
+      s.equity.push((s.equity[s.equity.length - 1] ?? 0) + r);
+    }
+
+    for (const [id, s] of byId) {
+      const decided = s.wins + s.losses;
+      s.winRate = decided > 0 ? Math.round((s.wins / decided) * 100) : null;
+      const gross = grossR.get(id) ?? 0;
+      s.profitFactor =
+        s.losses > 0 ? gross / s.losses : s.wins > 0 ? Infinity : null;
+    }
+
+    return { byId, live: true };
+  } catch {
+    return { byId: new Map(), live: false };
   }
 }
 

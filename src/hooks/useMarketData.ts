@@ -1,9 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   isLiveCapable, loadEngineStatus, loadMarketData, loadOpportunities,
-  type EngineStatus, type MarketData,
+  loadStrategyStats, type EngineStatus, type MarketData,
 } from '../data/live';
 import type { AISignal } from '../data/market';
+import {
+  STRATEGY_DEFS, loadActiveIds, saveActiveIds,
+  type Strategy, type StrategyStats,
+} from '../data/strategies';
 
 const REFRESH_MS = 60_000;
 
@@ -40,7 +44,53 @@ export function useMarketData(symbol: string, tf: string): MarketState {
   return isLiveCapable(symbol, tf) ? { ...EMPTY, loading: true } : EMPTY;
 }
 
-/** Oportunidades puntuadas por el motor (tabla inferior + panel IA). */
+/** Catálogo de estrategias con rendimiento real del motor y estado
+    activo persistido; solo las activas muestran señales en la UI. */
+export function useStrategies(): {
+  strategies: Strategy[];
+  activeIds: Set<string>;
+  toggle: (id: string) => void;
+} {
+  const [activeIds, setActiveIds] = useState<Set<string>>(loadActiveIds);
+  const [stats, setStats] = useState<Map<string, StrategyStats>>(new Map());
+
+  useEffect(() => {
+    let alive = true;
+    const refresh = () =>
+      loadStrategyStats().then((r) => {
+        if (alive && r.live) setStats(r.byId);
+      });
+    refresh();
+    const id = setInterval(refresh, REFRESH_MS);
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
+  }, []);
+
+  const toggle = (id: string) =>
+    setActiveIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      saveActiveIds(next);
+      return next;
+    });
+
+  const strategies = useMemo(
+    () =>
+      STRATEGY_DEFS.map((d) => ({
+        ...d,
+        active: activeIds.has(d.id),
+        stats: stats.get(d.id) ?? null,
+      })),
+    [activeIds, stats],
+  );
+
+  return { strategies, activeIds, toggle };
+}
+
+/** Oportunidades puntuadas por el motor (tabla inferior). */
 export function useOpportunities(): { signals: AISignal[]; live: boolean } {
   const [state, setState] = useState<{ signals: AISignal[]; live: boolean }>({
     signals: [],

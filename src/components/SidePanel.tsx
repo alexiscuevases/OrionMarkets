@@ -1,6 +1,6 @@
 import StrategyPanel from './StrategyPanel';
 import { TargetIcon } from './icons';
-import type { Strategy } from '../data/market';
+import type { Strategy } from '../data/strategies';
 
 interface Props {
   strategies: Strategy[];

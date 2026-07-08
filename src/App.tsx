@@ -4,35 +4,54 @@ import Watchlist from './components/Watchlist';
 import ChartPanel from './components/ChartPanel';
 import SidePanel from './components/SidePanel';
 import BottomPanel from './components/BottomPanel';
-import { useMarketData, useOpportunities } from './hooks/useMarketData';
-import { STRATEGIES, type AISignal, type Strategy } from './data/market';
+import { useMarketData, useOpportunities, useStrategies } from './hooks/useMarketData';
+import { isSignalEnabled, strategyIdForPattern } from './data/strategies';
+import type { AISignal } from './data/market';
 import './App.css';
 
 export default function App() {
   const [symbol, setSymbol] = useState('EURUSD');
   const [tf, setTf] = useState('H1');
-  const [strategies, setStrategies] = useState<Strategy[]>(STRATEGIES);
   const [activeSignal, setActiveSignal] = useState<AISignal | null>(null);
 
+  // catálogo de estrategias (una por detector del motor) con stats reales;
+  // el interruptor de cada una decide qué señales se muestran en la UI
+  const { strategies, activeIds, toggle } = useStrategies();
   // serie + señales del par en pantalla, siempre desde el motor Cloudflare
   const market = useMarketData(symbol, tf);
   // oportunidades puntuadas por el escáner global
   const opportunities = useOpportunities();
 
+  // sobre el gráfico solo se pintan señales de estrategias activas
+  const chartSignals = useMemo(
+    () => market.signals.filter((s) => isSignalEnabled(s.pattern, activeIds)),
+    [market.signals, activeIds],
+  );
+
   // todas las señales accionables en un solo sitio (tabla inferior):
   // oportunidades puntuadas del escáner primero, luego las señales abiertas
-  // del par en pantalla; las cerradas se consultan en el gráfico con su filtro
+  // del par en pantalla; siempre limitadas a las estrategias activas
   const openSignals = useMemo(() => {
     const seen = new Set<string>();
     return [...opportunities.signals, ...market.signals]
       .filter((s) => s.outcome === 'open')
+      .filter((s) => isSignalEnabled(s.pattern, activeIds))
       .filter((s) => !seen.has(s.id) && seen.add(s.id));
-  }, [market.signals, opportunities.signals]);
+  }, [market.signals, opportunities.signals, activeIds]);
 
-  const toggleStrategy = (id: string) =>
-    setStrategies((prev) =>
-      prev.map((s) => (s.id === id ? { ...s, active: !s.active } : s)),
-    );
+  const noneActive = activeIds.size === 0;
+
+  const toggleStrategy = (id: string) => {
+    // al apagar la estrategia de la señal enfocada, se suelta el foco
+    if (
+      activeIds.has(id) &&
+      activeSignal &&
+      strategyIdForPattern(activeSignal.pattern) === id
+    ) {
+      setActiveSignal(null);
+    }
+    toggle(id);
+  };
 
   const viewSignal = (s: AISignal) => {
     setSymbol(s.symbol);
@@ -62,12 +81,20 @@ export default function App() {
           activeSignal={activeSignal}
           onExitSignal={() => setActiveSignal(null)}
           series={market.series}
-          signals={market.signals}
+          signals={chartSignals}
           live={market.live}
           loading={market.loading}
         />
         <SidePanel strategies={strategies} onToggleStrategy={toggleStrategy} />
-        <BottomPanel signals={openSignals} onView={viewSignal} />
+        <BottomPanel
+          signals={openSignals}
+          onView={viewSignal}
+          emptyMessage={
+            noneActive
+              ? 'No hay estrategias activas: actívalas en el panel lateral'
+              : undefined
+          }
+        />
       </main>
     </div>
   );

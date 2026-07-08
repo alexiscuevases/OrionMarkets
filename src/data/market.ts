@@ -57,29 +57,6 @@ export const TIMEFRAMES: Timeframe[] = [
   { id: 'W1', label: 'W1', minutes: 10080, candles: 260 },
 ];
 
-/* ---------------- RNG con semilla ----------------
-   Solo se usa para las mini-curvas decorativas del catálogo de estrategias. */
-
-function hashSeed(str: string): number {
-  let h = 2166136261;
-  for (let i = 0; i < str.length; i++) {
-    h ^= str.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return h >>> 0;
-}
-
-function mulberry32(seed: number) {
-  let a = seed;
-  return () => {
-    a |= 0;
-    a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
 /* ---------------- Series de velas ---------------- */
 
 export type Candle = [number, number, number, number, number]; // t, o, h, l, c
@@ -132,77 +109,9 @@ export function quoteFromCandles(
   };
 }
 
-/* ---------------- Estrategias ---------------- */
-
-export interface Strategy {
-  id: string;
-  name: string;
-  desc: string;
-  tf: string;
-  pairs: string;
-  winRate: number;      // %
-  profitFactor: number;
-  signals30d: number;
-  risk: 'Bajo' | 'Medio' | 'Alto';
-  active: boolean;
-  equity: number[];     // curva de resultados para el mini-gráfico
-}
-
-function equityCurve(seed: string, bias: number): number[] {
-  const rnd = mulberry32(hashSeed(seed));
-  const out: number[] = [];
-  let v = 0;
-  for (let i = 0; i < 30; i++) {
-    v += (rnd() - 0.5 + bias) * 2;
-    out.push(v);
-  }
-  return out;
-}
-
-export const STRATEGIES: Strategy[] = [
-  {
-    id: 'london-breakout',
-    name: 'Ruptura de Londres',
-    desc: 'Opera la expansión del rango asiático en la apertura europea.',
-    tf: 'M15', pairs: 'EURUSD · GBPUSD', winRate: 61, profitFactor: 1.84,
-    signals30d: 26, risk: 'Medio', active: true,
-    equity: equityCurve('london', 0.09),
-  },
-  {
-    id: 'ema-cross',
-    name: 'Cruce EMA 20/50',
-    desc: 'Seguimiento de tendencia con confirmación de volumen.',
-    tf: 'H1', pairs: 'Mayores', winRate: 54, profitFactor: 1.52,
-    signals30d: 41, risk: 'Bajo', active: true,
-    equity: equityCurve('ema', 0.06),
-  },
-  {
-    id: 'rsi-div',
-    name: 'Divergencia RSI',
-    desc: 'Reversión en sobrecompra/sobreventa con divergencia confirmada.',
-    tf: 'H4', pairs: 'Mayores + Menores', winRate: 58, profitFactor: 1.67,
-    signals30d: 14, risk: 'Medio', active: false,
-    equity: equityCurve('rsi', 0.05),
-  },
-  {
-    id: 'order-blocks',
-    name: 'Order Blocks (SMC)',
-    desc: 'Zonas institucionales de oferta y demanda con mitigación.',
-    tf: 'H1', pairs: 'EURUSD · GBPJPY', winRate: 48, profitFactor: 2.10,
-    signals30d: 18, risk: 'Alto', active: false,
-    equity: equityCurve('smc', 0.04),
-  },
-  {
-    id: 'asian-grid',
-    name: 'Rejilla asiática',
-    desc: 'Reversión a la media dentro del rango nocturno de baja volatilidad.',
-    tf: 'M5', pairs: 'USDJPY · AUDUSD', winRate: 72, profitFactor: 1.31,
-    signals30d: 63, risk: 'Alto', active: false,
-    equity: equityCurve('grid', 0.03),
-  },
-];
-
-/* ---------------- Señales del modelo IA ---------------- */
+/* ---------------- Señales del modelo IA ----------------
+   El catálogo de estrategias (una por detector del motor) vive en
+   ./strategies.ts junto con el mapeo patrón → estrategia. */
 
 export type Direction = 'buy' | 'sell';
 

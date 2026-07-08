@@ -60,6 +60,31 @@ export interface ApiSignal {
   overallScore: number | null;
 }
 
+/** Agregado de rendimiento por patrón (ventana de N días). */
+export interface ApiPatternAgg {
+  pattern: string;
+  total: number;
+  open: number;
+  tp: number;
+  sl: number;
+  expired: number;
+  grossR: number;
+}
+
+/** Cierre individual para reconstruir la curva de resultados. */
+export interface ApiClosedTrade {
+  pattern: string;
+  outcome: 'tp_hit' | 'sl_hit';
+  rr: number;
+  outcomeTs: number;
+}
+
+export interface ApiStrategies {
+  days: number;
+  patterns: ApiPatternAgg[];
+  closed: ApiClosedTrade[];
+}
+
 export const api = {
   health: () => get<ApiHealth>('/api/health'),
 
@@ -75,4 +100,6 @@ export const api = {
 
   opportunities: (limit = 20) =>
     get<{ opportunities: ApiSignal[] }>(`/api/opportunities?limit=${limit}`),
+
+  strategies: (days = 30) => get<ApiStrategies>(`/api/strategies?days=${days}`),
 };

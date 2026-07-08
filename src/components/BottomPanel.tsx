@@ -6,11 +6,13 @@ import {
 interface Props {
   signals: AISignal[];
   onView: (signal: AISignal) => void;
+  /** Texto del estado vacío cuando hay un motivo concreto (p. ej. sin estrategias activas). */
+  emptyMessage?: string;
 }
 
 const TABS = ['Oportunidades detectadas', 'Posiciones', 'Historial', 'Alertas'] as const;
 
-export default function BottomPanel({ signals, onView }: Props) {
+export default function BottomPanel({ signals, onView, emptyMessage }: Props) {
   const [tab, setTab] = useState<(typeof TABS)[number]>(TABS[0]);
 
   return (
@@ -36,7 +38,7 @@ export default function BottomPanel({ signals, onView }: Props) {
             <span className="belt-dots" aria-hidden="true">
               <i /><i /><i />
             </span>
-            El motor aún no ha puntuado oportunidades
+            {emptyMessage ?? 'El motor aún no ha puntuado oportunidades'}
           </div>
         ) : (
         <div className="bottom__scroll">
