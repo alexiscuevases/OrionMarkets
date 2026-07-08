@@ -85,10 +85,11 @@ export function buildAnalysis(s: AISignal): SignalAnalysis {
 
     // Posición y pendiente de la EMA 200
     const withEma = buy === (ctx.ema200 === 'precio por encima');
+    const emaSide = ctx.ema200 === 'precio por encima' ? 'por encima' : 'por debajo';
     (withEma ? positives : negatives).push({
       text: withEma
-        ? `Precio ${ctx.ema200} de la EMA 200, coherente con la ${dirWord}`
-        : `Precio ${ctx.ema200} de la EMA 200, en contra de la ${dirWord}`,
+        ? `Precio ${emaSide} de la EMA 200, coherente con la ${dirWord}`
+        : `Precio ${emaSide} de la EMA 200, en contra de la ${dirWord}`,
     });
     const slopeAligned =
       (buy && ctx.ema200Slope === 'ascendente') || (!buy && ctx.ema200Slope === 'descendente');
