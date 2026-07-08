@@ -150,9 +150,46 @@ export class OrionPipeline extends WorkflowEntrypoint<Env, PipelineParams> {
         return buildContext(db, sig, candles);
       });
 
-      const verdict = await step.do(`ia ${sig.sigKey}`, AI_RETRY, async () =>
-        evaluateSignal(this.env.AI, this.env.AI_MODEL, dossier),
-      );
+      // gate por historial: si el patrón acumula expectancia negativa real
+      // en este símbolo+intervalo (muestra >= 15 cierres) se descarta sin
+      // gastar cuota de IA — el sistema aprende de sus propios resultados
+      const hist = dossier.recentOutcomes.find((o) => o.pattern === sig.pattern);
+      const expectancy =
+        hist && hist.total >= 15
+          ? hist.tpRate * (hist.avgRr || sig.rr) - (1 - hist.tpRate)
+          : null;
+      if (expectancy !== null && expectancy <= 0) {
+        await step.do(`gate ${sig.sigKey}`, RETRY, async () =>
+          persistEvaluation(db, 'gate:historial', sig.sigKey, dossier, {
+            action: 'skip',
+            confidence: 0,
+            thesis: `Descartada sin IA: "${sig.pattern}" acumula expectancia ${expectancy.toFixed(2)}R en ${hist!.total} cierres de ${sig.symbol} ${sig.interval}.`,
+            risks: 'Patrón con historial perdedor en este mercado.',
+            sentimentScore: 3,
+            newsScore: 3,
+          }),
+        );
+        continue;
+      }
+
+      // si la IA falla definitivamente (reintentos agotados) se registra un
+      // skip conservador y el pipeline continúa con el resto de señales en
+      // lugar de abortar toda la ejecución
+      let verdict: AiVerdict;
+      try {
+        verdict = await step.do(`ia ${sig.sigKey}`, AI_RETRY, async () =>
+          evaluateSignal(this.env.AI, this.env.AI_MODEL, dossier),
+        );
+      } catch {
+        verdict = {
+          action: 'skip',
+          confidence: 0,
+          thesis: 'IA no disponible tras varios reintentos; se descarta por prudencia.',
+          risks: 'Evaluación IA no completada.',
+          sentimentScore: 3,
+          newsScore: 3,
+        };
+      }
 
       /* ---------- FASE 4 · Scoring ---------- */
 

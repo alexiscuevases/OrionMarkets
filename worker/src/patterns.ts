@@ -1,4 +1,4 @@
-import { atr, ema, rsi, swings, type Swing } from './indicators';
+import { atr, ema, rsi, slopePct, swings, type Swing } from './indicators';
 import type { Candle, DetectedSignal, Direction } from './types';
 
 /* Detectores deterministas de patrones.
@@ -105,10 +105,37 @@ export function detectAll(
       if (raw.index >= candles.length - 1) continue;
       const candle = candles[raw.index];
       const entry = candle.close;
+
+      // rollover NY (21-22 UTC): spreads anchos y liquidez muerta; los
+      // barridos de esa franja disparaban SL sin que el patrón fuera malo
+      const hour = new Date(candle.ts).getUTCHours();
+      if (hour === 21 || hour === 22) continue;
+
+      const a = ctx.atr14[raw.index];
+      if (!Number.isFinite(a) || a <= 0) continue;
+
+      // banda de volatilidad operable: mercado muerto → el precio no llega
+      // al TP antes de expirar; pánico/noticia → el SL se barre por ruido
+      const atrPct = (a / entry) * 100;
+      if (atrPct < 0.015 || atrPct > 0.5) continue;
+
+      // veto contra-tendencia: operar reversals contra una EMA200 con
+      // pendiente clara y precio del mismo lado es la mayor fuente de SL;
+      // en régimen lateral (pendiente plana) los reversals sí tienen sitio
+      const slope = slopePct(ctx.ema200, raw.index, 40);
+      const dirUp = raw.direction === 'buy';
+      if (
+        Math.abs(slope) > 0.02 &&
+        dirUp !== slope > 0 &&
+        dirUp !== entry > ctx.ema200[raw.index]
+      ) continue;
+
       const risk = Math.abs(entry - raw.stop);
       if (risk <= 0) continue;
       const rr = Math.abs(raw.target - entry) / risk;
-      if (rr < 1) continue; // descartamos operaciones con RR < 1
+      // RR < 1.2 no paga la tasa de acierto real; RR > 6 = target irreal
+      // que casi nunca se alcanza antes del SL o la expiración
+      if (rr < 1.2 || rr > 6) continue;
 
       out.push({
         sigKey: `${symbol}|${interval}|${candle.ts}|${raw.pattern}`,
@@ -260,7 +287,8 @@ function engulfing(ctx: Ctx): RawSignal[] {
     if (bear && posPct < 0.65) continue;
 
     const dir: Direction = bull ? 'buy' : 'sell';
-    const stop = bull ? Math.min(c.low, prev.low) - a * 0.3 : Math.max(c.high, prev.high) + a * 0.3;
+    // colchón de 0.5 ATR bajo el extremo del patrón (0.3 se barría con el re-test)
+    const stop = bull ? Math.min(c.low, prev.low) - a * 0.5 : Math.max(c.high, prev.high) + a * 0.5;
     const risk = Math.abs(c.close - stop);
     const target = bull ? c.close + risk * 2 : c.close - risk * 2;
 
@@ -306,7 +334,9 @@ function pinBar(ctx: Ctx): RawSignal[] {
     if (!level) continue;
 
     const dir: Direction = bullPin ? 'buy' : 'sell';
-    const stop = bullPin ? c.low - a * 0.25 : c.high + a * 0.25;
+    // colchón de 0.5 ATR tras la mecha: con 0.25 los barridos de liquidez
+    // que re-testean el nivel sacaban la operación antes del giro
+    const stop = bullPin ? c.low - a * 0.5 : c.high + a * 0.5;
     const risk = Math.abs(c.close - stop);
     const target = bullPin ? c.close + risk * 2.2 : c.close - risk * 2.2;
 
@@ -350,10 +380,12 @@ function doubleTopBottom(ctx: Ctx): RawSignal[] {
       const dir: Direction = kind === 'low' ? 'buy' : 'sell';
       let confirmIdx = -1;
       const limit = Math.min(p2.index + 40, ctx.candles.length);
+      // el cierre debe superar la neckline con margen (0.15 ATR): los
+      // cierres justo en el nivel eran roturas marginales que revertían
       for (let i = p2.index + 1; i < limit; i++) {
         const brk = dir === 'buy'
-          ? ctx.candles[i].close > neckline
-          : ctx.candles[i].close < neckline;
+          ? ctx.candles[i].close > neckline + a * 0.15
+          : ctx.candles[i].close < neckline - a * 0.15;
         if (brk) { confirmIdx = i; break; }
       }
       if (confirmIdx < MIN_BARS) continue;
@@ -465,18 +497,29 @@ function rangeBreakout(ctx: Ctx): RawSignal[] {
     else if (c.close < ll - a * 0.15) dir = 'sell';
     if (!dir) continue;
 
-    const stop = (hh + ll) / 2; // mitad del rango roto
-    const target = dir === 'buy' ? c.close + width : c.close - width;
+    // anti-fakeout: la vela siguiente también debe cerrar fuera del rango;
+    // la mayoría de rupturas falsas revierten en esa primera vela
+    const j = i + 1;
+    if (j >= ctx.candles.length) continue;
+    const hold = ctx.candles[j];
+    const holds = dir === 'buy' ? hold.close > hh : hold.close < ll;
+    if (!holds) { i += 2; continue; }
+
+    // stop tras el nivel roto (que pasa a ser soporte/resistencia), no en
+    // mitad del rango: riesgo menor y solo salta si la ruptura fracasa
+    const buffer = Math.max(a * 0.75, width * 0.25);
+    const stop = dir === 'buy' ? hh - buffer : ll + buffer;
+    const target = dir === 'buy' ? hold.close + width : hold.close - width;
 
     out.push({
-      index: i,
+      index: j,
       pattern: 'Ruptura de rango',
       direction: dir,
       stop,
       target,
-      confidence: 57 + Math.min(10, (a * 8 - width) / a) + trendBonus(ctx, i, dir),
+      confidence: 57 + Math.min(10, (a * 8 - width) / a) + trendBonus(ctx, j, dir),
     });
-    i += 5; // evita señales duplicadas en velas consecutivas
+    i = j + 4; // evita señales duplicadas en velas consecutivas
   }
   return out;
 }

@@ -77,7 +77,7 @@ export interface SignalContext {
   distanceToRecentHigh: number; // %
   distanceToRecentLow: number;  // %
   correlations: Record<string, number>; // vs otros pares del universo
-  recentOutcomes: { pattern: string; total: number; tpRate: number }[];
+  recentOutcomes: { pattern: string; total: number; tpRate: number; avgRr: number }[];
   news: string | null;      // pendiente de proveedor de noticias
   sentiment: string | null; // pendiente de proveedor de sentimiento
 }
@@ -101,4 +101,5 @@ export interface ScoreBreakdown {
   sentiment: number;
   institutional: number;
   riskReward: number;
+  history: number;      // expectancia histórica real del patrón en este mercado
 }

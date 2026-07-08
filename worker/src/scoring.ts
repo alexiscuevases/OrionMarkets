@@ -15,6 +15,7 @@ const WEIGHTS: Record<keyof ScoreBreakdown, number> = {
   sentiment: 0.8,
   institutional: 1.0,
   riskReward: 1.4,
+  history: 1.3,
 };
 
 export function scoreSignal(ctx: SignalContext, ai: AiVerdict): {
@@ -70,8 +71,17 @@ export function scoreSignal(ctx: SignalContext, ai: AiVerdict): {
     ctx.riskReward >= 3 ? 5 : ctx.riskReward >= 2 ? 4 : ctx.riskReward >= 1.5 ? 3 : 2,
   );
 
+  // Historia: expectancia real del patrón en este símbolo+intervalo
+  // (tpRate·avgRr − (1 − tpRate), en múltiplos de R). Neutral sin muestra.
+  const mine = ctx.recentOutcomes.find((o) => o.pattern === ctx.pattern);
+  let history = 3;
+  if (mine && mine.total >= 10) {
+    const exp = mine.tpRate * (mine.avgRr || ctx.riskReward) - (1 - mine.tpRate);
+    history = exp > 0.5 ? 5 : exp > 0.15 ? 4 : exp > -0.1 ? 3 : exp > -0.4 ? 2 : 1;
+  }
+
   const breakdown: ScoreBreakdown = {
-    trend, momentum, volume, volatility, macro, news, sentiment, institutional, riskReward,
+    trend, momentum, volume, volatility, macro, news, sentiment, institutional, riskReward, history,
   };
 
   // Media ponderada 0-5 → 0-100, con ajuste IA de ±10 puntos

@@ -12,9 +12,9 @@ export async function buildContext(
   signal: SignalRow,
   candles: Candle[],
 ): Promise<SignalContext> {
-  const idx = candles.findIndex((c) => c.ts === signal.ts);
-  const at = idx >= 0 ? idx : candles.length - 1;
-  const upto = candles.slice(0, at + 1); // solo información disponible en el momento de la señal
+  // solo información disponible en el momento de la señal (sin look-ahead)
+  const upto = candles.filter((c) => c.ts <= signal.ts);
+  if (upto.length === 0) upto.push(...candles.slice(0, 1));
   const closes = upto.map((c) => c.close);
 
   const ema200 = ema(closes, 200);
@@ -26,8 +26,11 @@ export async function buildContext(
   const e200 = ema200[last];
   const e200Slope = slopePct(ema200, last, 40);
 
-  // tendencia de marco superior: pendiente de EMA50 sobre la serie 1h agregada
-  const higherTf = await loadCandles(db, signal.symbol, '1h', 400);
+  // tendencia de marco superior: pendiente de EMA50 sobre la serie 1h.
+  // Se corta en signal.ts: usar velas posteriores era look-ahead y sesgaba
+  // la validación IA de señales pasadas
+  const higherTf = (await loadCandles(db, signal.symbol, '1h', 400))
+    .filter((c) => c.ts <= signal.ts);
   const hCloses = higherTf.map((c) => c.close);
   const hEma50 = ema(hCloses, 50);
   const hSlope = slopePct(hEma50, hCloses.length - 1, 30);
@@ -50,7 +53,8 @@ export async function buildContext(
   const baseRet = returns(hCloses.slice(-200));
   for (const other of SYMBOLS) {
     if (other === signal.symbol) continue;
-    const oc = await loadCandles(db, other, '1h', 200);
+    const oc = (await loadCandles(db, other, '1h', 200))
+      .filter((c) => c.ts <= signal.ts);
     const r = correlation(baseRet, returns(oc.map((c) => c.close)));
     correlations[other] = Math.round(r * 100) / 100;
   }
@@ -77,7 +81,9 @@ export async function buildContext(
     distanceToRecentHigh: Math.round(((hh - price) / price) * 10000) / 100,
     distanceToRecentLow: Math.round(((price - ll) / price) * 10000) / 100,
     correlations,
-    recentOutcomes: stats.map((s) => ({ pattern: s.pattern, total: s.total, tpRate: s.tpRate })),
+    recentOutcomes: stats.map((s) => ({
+      pattern: s.pattern, total: s.total, tpRate: s.tpRate, avgRr: s.avgRr,
+    })),
     news: null,
     sentiment: null,
   };

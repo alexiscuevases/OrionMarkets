@@ -169,22 +169,24 @@ export async function getUnevaluatedSignals(
   return results;
 }
 
-/** Rendimiento histórico por patrón (para el dossier de la IA). */
+/** Rendimiento histórico por patrón (dossier IA, gate y scoring).
+    avgRr permite calcular expectancia: tpRate·avgRr − (1 − tpRate). */
 export async function getPatternStats(
   db: D1Database,
   symbol: string,
   interval: string,
-): Promise<{ pattern: string; total: number; tpRate: number }[]> {
+): Promise<{ pattern: string; total: number; tpRate: number; avgRr: number }[]> {
   const { results } = await db
     .prepare(
       `SELECT pattern,
               COUNT(*) AS total,
-              ROUND(AVG(CASE WHEN outcome = 'tp_hit' THEN 1.0 ELSE 0 END), 2) AS tpRate
+              ROUND(AVG(CASE WHEN outcome = 'tp_hit' THEN 1.0 ELSE 0 END), 2) AS tpRate,
+              ROUND(AVG(rr), 2) AS avgRr
        FROM signals
        WHERE symbol = ? AND interval = ? AND outcome IN ('tp_hit', 'sl_hit')
        GROUP BY pattern`,
     )
     .bind(symbol, interval)
-    .all<{ pattern: string; total: number; tpRate: number }>();
+    .all<{ pattern: string; total: number; tpRate: number; avgRr: number }>();
   return results;
 }

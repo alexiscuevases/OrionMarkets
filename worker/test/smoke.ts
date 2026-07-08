@@ -2,7 +2,7 @@
    detectores deterministas, resolución de resultados, scoring y
    parseo del veredicto IA. Ejecutar: node test/smoke.ts */
 
-import { detectAll, resolveOutcome } from '../src/patterns.ts';
+import { detectAll, profileFor, resolveOutcome } from '../src/patterns.ts';
 import { parseVerdict } from '../src/ai.ts';
 import { scoreSignal } from '../src/scoring.ts';
 import type { Candle, SignalContext } from '../src/types.ts';
@@ -48,7 +48,11 @@ console.log('1. detectAll — histórico completo');
 const candles = genCandles(42, 2000);
 const signals = detectAll('EURUSD', '1h', candles);
 check('detecta señales en 2000 velas', signals.length > 0, `(${signals.length})`);
-check('todas con RR >= 1', signals.every((s) => s.rr >= 1));
+check('RR en banda operable [1.2, 6]', signals.every((s) => s.rr >= 1.2 && s.rr <= 6));
+check('sin señales en rollover NY (21-22 UTC)', signals.every((s) => {
+  const h = new Date(s.ts).getUTCHours();
+  return h !== 21 && h !== 22;
+}));
 check('confianza en [0,100]', signals.every((s) => s.confidence >= 0 && s.confidence <= 100));
 check('claves únicas', new Set(signals.map((s) => s.sigKey)).size === signals.length);
 check('incluye señales históricas (no solo la última vela)',
@@ -61,7 +65,8 @@ const again = detectAll('EURUSD', '1h', candles);
 check('mismo input → mismas señales', JSON.stringify(again) === JSON.stringify(signals));
 
 console.log('3. resolveOutcome');
-const resolved = signals.map((s) => resolveOutcome(s, candles));
+const expiryBars = profileFor('1h').expiryBars;
+const resolved = signals.map((s) => resolveOutcome(s, candles, expiryBars));
 const counts = { tp_hit: 0, sl_hit: 0, expired: 0, open: 0 };
 for (const r of resolved) counts[r.outcome]++;
 check('resuelve resultados', counts.tp_hit + counts.sl_hit > 0, JSON.stringify(counts));
@@ -69,7 +74,14 @@ check('señal buy que toca SL primero',
   resolveOutcome(
     { ts: candles[0].ts, direction: 'buy', stop: candles[1].low + 1e-9, target: 99 },
     candles,
+    expiryBars,
   ).outcome === 'sl_hit');
+check('sin tocar niveles en la ventana → expired',
+  resolveOutcome(
+    { ts: candles[0].ts, direction: 'buy', stop: 0, target: 99 },
+    candles,
+    expiryBars,
+  ).outcome === 'expired');
 
 console.log('4. parseVerdict');
 const ctx: SignalContext = {
@@ -79,7 +91,7 @@ const ctx: SignalContext = {
   ema200Slope: 'ascendente', rsi14: 55, atrPct: 0.12, volumeTrend: 'creciente',
   distanceToRecentHigh: 0.8, distanceToRecentLow: 0.4,
   correlations: { GBPUSD: 0.6, USDJPY: -0.3 },
-  recentOutcomes: [{ pattern: 'Doble suelo', total: 10, tpRate: 0.6 }],
+  recentOutcomes: [{ pattern: 'Doble suelo', total: 10, tpRate: 0.6, avgRr: 2 }],
   news: null, sentiment: null,
 };
 const good = parseVerdict(
@@ -100,6 +112,12 @@ const weak = scoreSignal(
   { ...good, action: 'skip', confidence: 20 },
 );
 check('contexto contrario puntúa menos', weak.overall < strong.overall, `(${weak.overall} < ${strong.overall})`);
+const badHistory = scoreSignal(
+  { ...ctx, recentOutcomes: [{ pattern: 'Doble suelo', total: 30, tpRate: 0.15, avgRr: 2 }] },
+  good,
+);
+check('historial perdedor del patrón penaliza el score',
+  badHistory.overall < strong.overall, `(${badHistory.overall} < ${strong.overall})`);
 
 console.log(failures === 0 ? '\nTODO OK' : `\n${failures} FALLOS`);
 process.exit(failures === 0 ? 0 : 1);
