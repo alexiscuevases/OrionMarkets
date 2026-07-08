@@ -19,12 +19,14 @@ export default function App() {
   // oportunidades puntuadas por el escáner global
   const opportunities = useOpportunities();
 
-  // el panel IA mezcla las señales del par en pantalla con las del escáner
-  const panelSignals = useMemo(() => {
+  // todas las señales accionables en un solo sitio (tabla inferior):
+  // oportunidades puntuadas del escáner primero, luego las señales abiertas
+  // del par en pantalla; las cerradas se consultan en el gráfico con su filtro
+  const openSignals = useMemo(() => {
     const seen = new Set<string>();
-    return [...market.signals, ...opportunities.signals]
-      .filter((s) => !seen.has(s.id) && seen.add(s.id))
-      .slice(0, 9);
+    return [...opportunities.signals, ...market.signals]
+      .filter((s) => s.outcome === 'open')
+      .filter((s) => !seen.has(s.id) && seen.add(s.id));
   }, [market.signals, opportunities.signals]);
 
   const toggleStrategy = (id: string) =>
@@ -64,14 +66,8 @@ export default function App() {
           live={market.live}
           loading={market.loading}
         />
-        <SidePanel
-          strategies={strategies}
-          onToggleStrategy={toggleStrategy}
-          signals={panelSignals}
-          onViewSignal={viewSignal}
-          activeSignalId={activeSignal?.id ?? null}
-        />
-        <BottomPanel signals={opportunities.signals} onView={viewSignal} />
+        <SidePanel strategies={strategies} onToggleStrategy={toggleStrategy} />
+        <BottomPanel signals={openSignals} onView={viewSignal} />
       </main>
     </div>
   );
