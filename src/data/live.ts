@@ -31,11 +31,13 @@ export interface MarketData {
   series: SeriesData | null;
   signals: AISignal[];
   live: boolean;
+  /** true si la API falló (distinto de «sin histórico»): la UI lo dice. */
+  error: boolean;
 }
 
-const EMPTY: MarketData = { series: null, signals: [], live: false };
+const EMPTY: MarketData = { series: null, signals: [], live: false, error: false };
 
-/** Serie + señales del motor; vacío si no hay cobertura o la API falla. */
+/** Serie + señales del motor; vacío si no hay cobertura, error si la API falla. */
 export async function loadMarketData(symbol: string, tf: string): Promise<MarketData> {
   if (!isLiveCapable(symbol, tf)) return EMPTY;
 
@@ -53,9 +55,10 @@ export async function loadMarketData(symbol: string, tf: string): Promise<Market
       },
       signals: signalsRes.signals.map((s) => adaptSignal(s, tf)),
       live: true,
+      error: false,
     };
   } catch {
-    return EMPTY;
+    return { ...EMPTY, error: true };
   }
 }
 
@@ -180,8 +183,10 @@ export async function loadEngineStatus(): Promise<{
 }> {
   try {
     const h = await api.health();
+    // h.ok es la salud GLOBAL (pipeline+datos+IA); si la API responde, el
+    // motor está online aunque haya degradación interna
     return {
-      status: h.ok ? 'online' : 'offline',
+      status: 'online',
       lastRun: h.lastRun?.finishedAt ?? null,
       topScore: h.lastRun?.topScore ?? null,
     };

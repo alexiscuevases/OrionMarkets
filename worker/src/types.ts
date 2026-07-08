@@ -5,10 +5,21 @@ export interface Env {
   VECTOR_INDEX: Vectorize;
   PIPELINE: Workflow;
   TWELVEDATA_API_KEY: string;
+  /** Secret: Bearer token de los endpoints de administración (Fase 8). */
+  ADMIN_API_KEY?: string;
   AI_MODEL: string;
   AI_MIN_CONFIDENCE: string;
   AI_MAX_PER_RUN: string;
   AI_MAX_REEVAL: string;
+  /** Orígenes CORS permitidos, separados por comas; '*' si no se define. */
+  ALLOWED_ORIGINS?: string;
+  /** Tarifas Workers AI (USD por millón de tokens) para el coste estimado. */
+  AI_COST_IN_PER_M?: string;
+  AI_COST_OUT_PER_M?: string;
+  /** Paper trading: parámetros de la cuenta por defecto. */
+  PAPER_INITIAL_BALANCE?: string;
+  PAPER_RISK_PCT?: string;
+  PAPER_MIN_SCORE?: string;
 }
 
 /** Configuración del universo a ingerir. */
@@ -82,8 +93,11 @@ export interface SignalContext {
   recentOutcomes: { pattern: string; total: number; tpRate: number; avgRr: number }[];
   /** Resumen de casos históricos similares (memoria vectorial); null sin datos. */
   similarCases: string | null;
-  news: string | null;      // pendiente de proveedor de noticias
+  /** Calendario económico próximo (capa de contexto); null sin eventos cargados. */
+  news: string | null;
   sentiment: string | null; // pendiente de proveedor de sentimiento
+  /** Avisos operativos (p. ej. evento de alto impacto inminente). */
+  marketWarnings?: string[] | null;
   /** Sesiones de mercado abiertas en el momento del corte del dossier. */
   session?: string;
   /** Estructura Smart Money (order blocks y liquidez); null sin muestra. */

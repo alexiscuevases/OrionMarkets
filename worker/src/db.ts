@@ -1,3 +1,4 @@
+import { DETECTOR_VERSION } from './versions';
 import type { CalibrationBucket, Candle, DetectedSignal, Lesson, Outcome, SignalRow } from './types';
 import type { MistakeCase } from './learn';
 
@@ -96,12 +97,12 @@ export async function insertSignals(
     db
       .prepare(
         `INSERT OR IGNORE INTO signals
-         (sig_key, symbol, interval, ts, pattern, direction, entry, stop, target, rr, confidence, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (sig_key, symbol, interval, ts, pattern, direction, entry, stop, target, rr, confidence, created_at, detector_version)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         s.sigKey, s.symbol, s.interval, s.ts, s.pattern, s.direction,
-        s.entry, s.stop, s.target, s.rr, s.confidence, now,
+        s.entry, s.stop, s.target, s.rr, s.confidence, now, DETECTOR_VERSION,
       ),
   );
 

@@ -1,4 +1,5 @@
 import { atr, ema, rsi, slopePct } from './indicators';
+import { REFLECT_PROMPT_VERSION } from './versions';
 import type { Candle, SignalContext, SignalRow } from './types';
 
 /* Aprendizaje continuo — memoria de casos y reflexión sobre errores.
@@ -206,18 +207,48 @@ export async function reflectOnMistakes(
   ai: Ai,
   model: string,
   cases: MistakeCase[],
+  telemetry?: import('./ai').AiTelemetry,
 ): Promise<{ scope: string; lesson: string }[]> {
-  const result = (await ai.run(model as Parameters<Ai['run']>[0], {
-    messages: [
-      { role: 'system', content: REFLECT_PROMPT },
-      { role: 'user', content: JSON.stringify(cases, null, 1) },
-    ],
-    temperature: 0.2,
-    max_tokens: 768,
-  })) as { response?: unknown };
+  const user = JSON.stringify(cases, null, 1);
+  const started = Date.now();
+  let result: { response?: unknown; usage?: { prompt_tokens?: number; completion_tokens?: number } };
+  try {
+    result = (await ai.run(model as Parameters<Ai['run']>[0], {
+      messages: [
+        { role: 'system', content: REFLECT_PROMPT },
+        { role: 'user', content: user },
+      ],
+      temperature: 0.2,
+      max_tokens: 768,
+    })) as typeof result;
+  } catch (e) {
+    if (telemetry) {
+      const { estimateCost, estimateTokens, logAiCall } = await import('./aiLog');
+      const tokensIn = estimateTokens(REFLECT_PROMPT + user);
+      await logAiCall(telemetry.db, {
+        kind: 'reflect', model, promptVersion: REFLECT_PROMPT_VERSION, sigKey: null,
+        latencyMs: Date.now() - started, tokensIn, tokensOut: 0,
+        estCostUsd: estimateCost(tokensIn, 0, telemetry.rates),
+        success: false, error: e instanceof Error ? e.message : String(e),
+      });
+    }
+    throw e;
+  }
 
   const raw =
     typeof result.response === 'string' ? result.response : JSON.stringify(result.response ?? '');
+
+  if (telemetry) {
+    const { estimateCost, estimateTokens, logAiCall } = await import('./aiLog');
+    const tokensIn = result.usage?.prompt_tokens ?? estimateTokens(REFLECT_PROMPT + user);
+    const tokensOut = result.usage?.completion_tokens ?? estimateTokens(raw);
+    await logAiCall(telemetry.db, {
+      kind: 'reflect', model, promptVersion: REFLECT_PROMPT_VERSION, sigKey: null,
+      latencyMs: Date.now() - started, tokensIn, tokensOut,
+      estCostUsd: estimateCost(tokensIn, tokensOut, telemetry.rates),
+      success: true, error: null,
+    });
+  }
   const match = raw.match(/\{[\s\S]*\}/);
   if (!match) return [];
 

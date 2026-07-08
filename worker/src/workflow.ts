@@ -19,6 +19,12 @@ import {
   caseText, embedTexts, featuresFromCandles, featuresFromContext,
   reflectOnMistakes, summarizeSimilarCases,
 } from './learn';
+import { costRates, pruneAiCalls } from './aiLog';
+import { recordRunEnd, recordRunStart } from './observe';
+import {
+  ensureAccount, openPaperPositions, resolvePaperPositions,
+} from './paper';
+import { PROMPT_VERSION } from './versions';
 import {
   HISTORY_START, INTERVALS, INTERVAL_MS, SYMBOLS,
   type CalibrationBucket, type Env, type Interval, type SignalContext, type AiVerdict,
@@ -57,11 +63,51 @@ const AI_RETRY: WorkflowStepConfig = {
   timeout: '90 seconds',
 };
 
+/** Lock best-effort para no solapar pipelines (P0-4): dos ingestas
+    simultáneas compiten por los 8 créditos/min de Twelve Data. */
+export const PIPELINE_LOCK_KEY = 'pipeline:lock';
+const PIPELINE_LOCK_TTL = 25 * 60; // segundos; > duración normal de un run
+
 export class OrionPipeline extends WorkflowEntrypoint<Env, PipelineParams> {
   async run(event: WorkflowEvent<PipelineParams>, step: WorkflowStep) {
     const db = this.env.DB;
     const intervals: readonly Interval[] =
       event.payload.intervals?.length ? event.payload.intervals : INTERVALS;
+    const rates = costRates(this.env);
+
+    await step.do('registra inicio del run', RETRY, async () => {
+      await recordRunStart(db, event.instanceId, event.payload.trigger);
+      await this.env.CACHE.put(PIPELINE_LOCK_KEY, event.instanceId, {
+        expirationTtl: PIPELINE_LOCK_TTL,
+      });
+    });
+
+    try {
+      const result = await this.pipeline(event, step, intervals, rates);
+      await step.do('registra fin del run', RETRY, async () => {
+        await recordRunEnd(db, event.instanceId, 'success', result);
+        await this.env.CACHE.delete(PIPELINE_LOCK_KEY);
+      });
+      return result;
+    } catch (e) {
+      // fuera de step: si esto falla, el run queda 'running' y el health
+      // lo detecta por antigüedad; el lock caduca solo por TTL
+      await recordRunEnd(
+        db, event.instanceId, 'error', null,
+        e instanceof Error ? e.message : String(e),
+      ).catch(() => {});
+      await this.env.CACHE.delete(PIPELINE_LOCK_KEY).catch(() => {});
+      throw e;
+    }
+  }
+
+  private async pipeline(
+    event: WorkflowEvent<PipelineParams>,
+    step: WorkflowStep,
+    intervals: readonly Interval[],
+    rates: ReturnType<typeof costRates>,
+  ) {
+    const db = this.env.DB;
 
     /* ---------- FASE 1 · Ingesta ---------- */
 
@@ -220,7 +266,9 @@ export class OrionPipeline extends WorkflowEntrypoint<Env, PipelineParams> {
       let verdict: AiVerdict;
       try {
         verdict = await step.do(`ia ${sig.sigKey}`, AI_RETRY, async () =>
-          evaluateSignal(this.env.AI, this.env.AI_MODEL, dossier, lessons),
+          evaluateSignal(this.env.AI, this.env.AI_MODEL, dossier, lessons, {
+            db, kind: 'evaluate', sigKey: sig.sigKey, rates,
+          }),
         );
       } catch {
         verdict = {
@@ -343,7 +391,9 @@ export class OrionPipeline extends WorkflowEntrypoint<Env, PipelineParams> {
       let verdict: AiVerdict;
       try {
         verdict = await step.do(`re-ia ${sig.sigKey}`, AI_RETRY, async () =>
-          evaluateSignal(this.env.AI, this.env.AI_MODEL, dossier, lessons),
+          evaluateSignal(this.env.AI, this.env.AI_MODEL, dossier, lessons, {
+            db, kind: 'reevaluate', sigKey: sig.sigKey, rates,
+          }),
         );
       } catch {
         continue;
@@ -359,6 +409,23 @@ export class OrionPipeline extends WorkflowEntrypoint<Env, PipelineParams> {
       reevaluated++;
       topScore = Math.max(topScore, overall);
     }
+
+    /* ---------- FASE 4b · Paper trading ----------
+       Primero se liquidan las posiciones cuyas señales cerraron (libera
+       slots y actualiza el balance) y después se abren posiciones para
+       las señales recién validadas por la IA. Todo queda auditado en
+       paper_orders aunque se rechace. */
+
+    const paper = await step.do('paper trading', RETRY, async () => {
+      const account = await ensureAccount(db, {
+        initialBalance: Number(this.env.PAPER_INITIAL_BALANCE) || 10_000,
+        riskPct: Number(this.env.PAPER_RISK_PCT) || 1,
+        minScore: Number(this.env.PAPER_MIN_SCORE) || 65,
+      });
+      const closed = await resolvePaperPositions(db, account);
+      const { opened, rejected } = await openPaperPositions(db, account);
+      return { closed, opened, rejected };
+    });
 
     /* ---------- FASE 5 · Aprendizaje ---------- */
 
@@ -434,7 +501,10 @@ export class OrionPipeline extends WorkflowEntrypoint<Env, PipelineParams> {
           const lessons = await reflectOnMistakes(
             this.env.AI,
             this.env.AI_MODEL,
-            mistakes.map(({ outcomeTs: _ts, ...c }) => c),
+            // sin outcomeTs: es el cursor interno, no material de reflexión
+            mistakes.map(({ symbol, interval, pattern, direction, rr, aiAction, aiConfidence, aiThesis, outcome }) =>
+              ({ symbol, interval, pattern, direction, rr, aiAction, aiConfidence, aiThesis, outcome })),
+            { db, kind: 'reflect', sigKey: null, rates },
           );
           if (lessons.length > 0) {
             await addLessons(db, lessons.map((l) => ({ ...l, support: mistakes.length })));
@@ -451,7 +521,13 @@ export class OrionPipeline extends WorkflowEntrypoint<Env, PipelineParams> {
       newLessons = 0;
     }
 
-    /* ---------- Resumen para el frontend ---------- */
+    /* ---------- Retención y resumen ---------- */
+
+    // retención: los registros de llamadas IA de más de 30 días se podan
+    // (el agregado histórico vive en la calibración, no en el log crudo)
+    await step.do('retención ai_calls', RETRY, async () => {
+      await pruneAiCalls(db, Date.now() - 30 * 86_400_000);
+    });
 
     await step.do('publica resumen en KV', RETRY, async () => {
       await this.env.CACHE.put(
@@ -466,11 +542,16 @@ export class OrionPipeline extends WorkflowEntrypoint<Env, PipelineParams> {
           topScore,
           indexedCases,
           newLessons,
+          paperOpened: paper.opened,
+          paperClosed: paper.closed,
         }),
       );
     });
 
-    return { ingested, newSignals, evaluated, reevaluated, topScore, indexedCases, newLessons };
+    return {
+      ingested, newSignals, evaluated, reevaluated, topScore, indexedCases, newLessons,
+      paperOpened: paper.opened, paperClosed: paper.closed, paperRejected: paper.rejected,
+    };
   }
 }
 
@@ -486,27 +567,46 @@ async function persistEvaluation(
 ): Promise<number> {
   const { breakdown, overall } = scoreSignal(dossier, verdict, calib);
   const now = Date.now();
-  await db
-    .prepare(
-      `INSERT OR REPLACE INTO evaluations
-       (sig_key, context_json, ai_action, ai_confidence, ai_thesis, ai_risks,
-        scores_json, overall_score, model, created_at, revision, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .bind(
-      sigKey,
-      JSON.stringify(dossier),
-      verdict.action,
-      verdict.confidence,
-      verdict.thesis,
-      verdict.risks,
-      JSON.stringify(breakdown),
-      overall,
-      model,
-      prior?.createdAt ?? now,
-      prior ? prior.revision + 1 : 1,
-      now,
-    )
-    .run();
+  const revision = prior ? prior.revision + 1 : 1;
+  // los descartes automáticos del gate no pasan por el prompt
+  const promptVersion = model.startsWith('gate:') ? null : PROMPT_VERSION;
+
+  await db.batch([
+    db
+      .prepare(
+        `INSERT OR REPLACE INTO evaluations
+         (sig_key, context_json, ai_action, ai_confidence, ai_thesis, ai_risks,
+          scores_json, overall_score, model, created_at, revision, updated_at, prompt_version)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        sigKey,
+        JSON.stringify(dossier),
+        verdict.action,
+        verdict.confidence,
+        verdict.thesis,
+        verdict.risks,
+        JSON.stringify(breakdown),
+        overall,
+        model,
+        prior?.createdAt ?? now,
+        revision,
+        now,
+        promptVersion,
+      ),
+    // historial append-only (P1-1): cada veredicto queda auditable aunque
+    // evaluations solo conserve la revisión vigente
+    db
+      .prepare(
+        `INSERT INTO evaluation_history
+         (sig_key, revision, ai_action, ai_confidence, ai_thesis, ai_risks,
+          overall_score, model, prompt_version, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        sigKey, revision, verdict.action, verdict.confidence,
+        verdict.thesis, verdict.risks, overall, model, promptVersion, now,
+      ),
+  ]);
   return overall;
 }

@@ -16,7 +16,7 @@ export interface MarketState extends MarketData {
   loading: boolean;
 }
 
-const EMPTY: MarketState = { series: null, signals: [], live: false, loading: false };
+const EMPTY: MarketState = { series: null, signals: [], live: false, loading: false, error: false };
 
 /** Serie + señales del par/TF en pantalla, siempre desde el motor. */
 export function useMarketData(symbol: string, tf: string): MarketState {

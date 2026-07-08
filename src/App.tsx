@@ -87,6 +87,7 @@ export default function App() {
           signals={chartSignals}
           live={market.live}
           loading={market.loading}
+          error={market.error}
         />
         <SidePanel strategies={strategies} onToggleStrategy={toggleStrategy} />
         <BottomPanel

@@ -1,5 +1,6 @@
 import { atr, correlation, ema, returns, rsi, slopePct } from './indicators';
 import { getPatternStats, loadCandles } from './db';
+import { getMarketContext } from './marketContext';
 import { smcSummary } from './smc';
 import { SYMBOLS, type Candle, type SignalContext, type SignalRow } from './types';
 
@@ -81,6 +82,11 @@ export async function buildContext(
   // rendimiento histórico de los patrones en este mercado (auto-referencia)
   const stats = await getPatternStats(db, signal.symbol, signal.interval);
 
+  // calendario económico (capa de contexto, Fase 5): eventos ya publicados
+  // en el calendario en el momento del corte — conocidos con antelación,
+  // no información futura. Sin proveedor conectado queda null (neutral).
+  const market = await getMarketContext(db, signal.symbol, asOf);
+
   return {
     symbol: signal.symbol,
     interval: signal.interval,
@@ -104,8 +110,9 @@ export async function buildContext(
       pattern: s.pattern, total: s.total, tpRate: s.tpRate, avgRr: s.avgRr,
     })),
     similarCases: null, // lo rellena el workflow con la memoria vectorial
-    news: null,
+    news: market.newsSummary,
     sentiment: null,
+    marketWarnings: market.warnings.length > 0 ? market.warnings : null,
     session: openSessions(asOf),
     smc: smcSummary(upto, signal.direction),
   };

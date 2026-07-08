@@ -184,8 +184,30 @@ export function buildAnalysis(s: AISignal): SignalAnalysis {
       }
     }
 
-    // Noticias (null hasta conectar proveedor)
-    if (ctx.news) negatives.push({ text: `Noticias próximas: ${ctx.news}` });
+    // Casos históricos casi idénticos (memoria vectorial del motor)
+    if (ctx.similarCases) {
+      const winMatch = ctx.similarCases.match(/acierto (\d+)%/);
+      const winPct = winMatch ? Number(winMatch[1]) : null;
+      if (winPct !== null && winPct >= 55) {
+        positives.push({ text: ctx.similarCases });
+      } else if (winPct !== null && winPct <= 45) {
+        negatives.push({ text: ctx.similarCases });
+        riskPts += 1;
+      } else {
+        positives.push({ text: ctx.similarCases });
+      }
+    }
+
+    // Avisos operativos del motor (evento macro de alto impacto inminente)
+    for (const w of ctx.marketWarnings ?? []) {
+      negatives.push({ text: w });
+      riskPts += 2;
+    }
+
+    // Calendario económico próximo
+    if (ctx.news && !(ctx.marketWarnings?.length)) {
+      negatives.push({ text: `Calendario próximo: ${ctx.news}` });
+    }
   }
 
   // Ratio riesgo/beneficio (disponible aunque no haya dossier)
@@ -236,6 +258,46 @@ export function buildAnalysis(s: AISignal): SignalAnalysis {
     grade,
     patternProb,
     conclusion,
+  };
+}
+
+/* ---------- sizing sugerido (espejo de worker/src/risk.ts) ---------- */
+
+export interface SuggestedPosition {
+  balance: number;
+  riskPct: number;
+  riskUsd: number;
+  stopPips: number;
+  lots: number;
+  perPipUsd: number;
+}
+
+/** Tamaño de posición orientativo para una cuenta de referencia.
+    Mismo cálculo que el módulo de riesgo del motor (cuenta en USD). */
+export function suggestedPosition(
+  s: AISignal,
+  balance = 10_000,
+  riskPct = 1,
+): SuggestedPosition | null {
+  const pip = s.symbol.slice(3) === 'JPY' ? 0.01 : 0.0001;
+  const stopDistance = Math.round(Math.abs(s.entry - s.stop) * 1e6) / 1e6;
+  if (!(stopDistance > 0) || !(s.entry > 0)) return null;
+
+  const conv =
+    s.symbol.slice(3) === 'USD' ? 1
+    : s.symbol.slice(0, 3) === 'USD' ? 1 / s.entry
+    : 1;
+  const riskUsd = balance * (riskPct / 100);
+  const units = Math.floor(riskUsd / (stopDistance * conv) + 1e-9);
+  if (units <= 0) return null;
+
+  return {
+    balance,
+    riskPct,
+    riskUsd,
+    stopPips: Math.round((stopDistance / pip) * 10) / 10,
+    lots: Math.round((units / 100_000) * 100) / 100,
+    perPipUsd: Math.round(units * pip * conv * 100) / 100,
   };
 }
 

@@ -53,8 +53,22 @@
     // Máximo de señales evaluadas por IA en cada ejecución
     "AI_MAX_PER_RUN": "8",
     // Máximo de señales abiertas re-evaluadas por IA en cada ejecución
-    "AI_MAX_REEVAL": "4"
+    "AI_MAX_REEVAL": "4",
+    // CORS: orígenes permitidos separados por comas ('*' = cualquiera).
+    // En producción con dominio propio: "https://app.tudominio.com"
+    "ALLOWED_ORIGINS": "*",
+    // Tarifas Workers AI (USD por millón de tokens) para el coste estimado
+    // en ai_calls; ajustar si cambia el modelo o el precio
+    "AI_COST_IN_PER_M": "0.29",
+    "AI_COST_OUT_PER_M": "2.25",
+    // Paper trading: cuenta virtual por defecto
+    "PAPER_INITIAL_BALANCE": "10000",
+    "PAPER_RISK_PCT": "1",
+    "PAPER_MIN_SCORE": "65"
   }
   // Secretos (no van aquí):
   //   wrangler secret put TWELVEDATA_API_KEY
+  //   wrangler secret put ADMIN_API_KEY   ← Bearer token de /api/run,
+  //     /api/backtest, /api/admin/*, /api/dataset y /api/paper/reset;
+  //     sin él esos endpoints devuelven 503 (cerrados por defecto)
 }

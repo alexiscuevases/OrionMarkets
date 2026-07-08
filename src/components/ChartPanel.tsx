@@ -20,6 +20,8 @@ interface Props {
   signals: AISignal[];
   live: boolean;
   loading: boolean;
+  /** true si la última carga falló por red/API (no por falta de histórico). */
+  error?: boolean;
 }
 
 const KINDS: { id: ChartKind; label: string; icon: typeof CandlesIcon }[] = [
@@ -59,7 +61,7 @@ function matchesFilter(s: AISignal, f: SignalFilter): boolean {
 }
 
 export default function ChartPanel({
-  symbol, tf, onTfChange, activeSignal, onExitSignal, series, signals, live, loading,
+  symbol, tf, onTfChange, activeSignal, onExitSignal, series, signals, live, loading, error,
 }: Props) {
   const [kind, setKind] = useState<ChartKind>('candlestick');
   const [showSignals, setShowSignals] = useState(true);
@@ -329,15 +331,17 @@ export default function ChartPanel({
             signals={visibleSignals}
           />
         ) : (
-          <div className="chart-empty">
+          <div className={`chart-empty ${error ? 'chart-empty--error' : ''}`}>
             <span className="belt-dots" aria-hidden="true">
               <i /><i /><i />
             </span>
             {loading
               ? `Cargando ${symbol} ${tf} desde el motor…`
-              : isLiveCapable(symbol, tf)
-                ? `El motor aún no tiene histórico de ${symbol} en ${tf}`
-                : `${symbol} ${tf} está fuera del universo del motor`}
+              : error
+                ? `No se pudo conectar con el motor. Se reintenta automáticamente cada minuto.`
+                : isLiveCapable(symbol, tf)
+                  ? `El motor aún no tiene histórico de ${symbol} en ${tf}`
+                  : `${symbol} ${tf} está fuera del universo del motor`}
           </div>
         )}
       </div>

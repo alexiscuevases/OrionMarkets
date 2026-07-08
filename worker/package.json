@@ -7,7 +7,7 @@
 		"dev": "wrangler dev --test-scheduled",
 		"deploy": "wrangler deploy",
 		"typecheck": "tsc --noEmit",
-		"test": "tsx test/smoke.ts",
+		"test": "tsx test/smoke.ts && tsx test/unit.ts",
 		"db:local": "wrangler d1 migrations apply orion-db --local",
 		"db:remote": "wrangler d1 migrations apply orion-db --remote",
 		"tail": "wrangler tail"

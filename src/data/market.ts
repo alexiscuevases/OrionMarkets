@@ -128,6 +128,10 @@ export interface SignalCtx {
   riskReward: number;
   recentOutcomes: { pattern: string; total: number; tpRate: number; avgRr: number }[];
   news: string | null;
+  /** Resumen de casos históricos casi idénticos y su resultado real (memoria vectorial). */
+  similarCases?: string | null;
+  /** Avisos operativos del motor (p. ej. evento macro de alto impacto inminente). */
+  marketWarnings?: string[] | null;
   /** Sesiones abiertas en el momento del dossier (p. ej. "Londres + Nueva York"). */
   session?: string;
   /** Estructura Smart Money que vio la IA (espejo de SmcSummary del worker). */

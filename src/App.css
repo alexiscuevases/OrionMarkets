@@ -1229,6 +1229,30 @@
   font-family: var(--font-ui);
 }
 
+.analysis__sizing {
+  padding: 10px 12px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--line-strong);
+  background: rgba(240, 180, 41, 0.05);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--ink-mid);
+}
+
+.analysis__sizing label {
+  display: block;
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-low);
+  margin-bottom: 3px;
+}
+
+.chart-empty--error {
+  color: var(--sell-ink);
+}
+
 .analysis__foot {
   display: flex;
   justify-content: flex-end;

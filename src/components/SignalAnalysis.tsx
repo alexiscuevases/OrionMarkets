@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { ApiCalibrationBucket } from '../api/client';
-import { buildAnalysis, calibratedProb } from '../data/analysis';
+import { buildAnalysis, calibratedProb, suggestedPosition } from '../data/analysis';
 import { loadCalibration } from '../data/live';
 import { fmtDateTime, pairBySymbol, type AISignal } from '../data/market';
 import { SparkleIcon, TargetIcon } from './icons';
@@ -41,6 +41,7 @@ export default function SignalAnalysis({ signal, onClose, onViewChart }: Props) 
   const pair = pairBySymbol(signal.symbol);
   const buy = signal.direction === 'buy';
   const evaluated = signal.aiAction != null;
+  const sizing = suggestedPosition(signal);
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -188,6 +189,17 @@ export default function SignalAnalysis({ signal, onClose, onViewChart }: Props) 
               <span><label>R:B</label>1:{(signal.rr ?? signal.context!.riskReward).toFixed(1)}</span>
             )}
           </div>
+
+          {sizing && (
+            <div className="analysis__sizing">
+              <label>Tamaño sugerido</label>
+              Con una cuenta de ${sizing.balance.toLocaleString('es')} y riesgo del{' '}
+              {sizing.riskPct}%: <b className="num">{sizing.lots.toFixed(2)} lotes</b>{' '}
+              (riesgo ${sizing.riskUsd.toFixed(0)}, stop a{' '}
+              <span className="num">{sizing.stopPips}</span> pips, ${sizing.perPipUsd.toFixed(2)}/pip).
+              Ajusta el cálculo a tu balance real antes de operar.
+            </div>
+          )}
         </div>
 
         <footer className="analysis__foot">
