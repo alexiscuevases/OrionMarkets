@@ -6,15 +6,63 @@ export const API_BASE: string =
 
 const TIMEOUT_MS = 8000;
 
-async function get<T>(path: string): Promise<T> {
+/* ---------- sesión (auth con D1 en el worker) ---------- */
+
+const TOKEN_KEY = 'orion.session';
+
+export function getToken(): string | null {
+  return localStorage.getItem(TOKEN_KEY);
+}
+
+export function setToken(token: string | null): void {
+  if (token) localStorage.setItem(TOKEN_KEY, token);
+  else localStorage.removeItem(TOKEN_KEY);
+}
+
+/** Se emite cuando el worker devuelve 401: la sesión caducó o no existe. */
+export const UNAUTHORIZED_EVENT = 'orion:unauthorized';
+
+async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const token = getToken();
   const res = await fetch(`${API_BASE}${path}`, {
+    ...init,
+    headers: {
+      ...(init.body ? { 'Content-Type': 'application/json' } : {}),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...init.headers,
+    },
     signal: AbortSignal.timeout(TIMEOUT_MS),
   });
-  if (!res.ok) throw new Error(`API ${res.status} en ${path}`);
+  if (res.status === 401 && !path.startsWith('/api/auth/')) {
+    // sesión inválida: se limpia y la AuthGate vuelve a pedir login
+    setToken(null);
+    window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+  }
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `API ${res.status} en ${path}`);
+  }
   return res.json() as Promise<T>;
 }
 
+const get = <T,>(path: string): Promise<T> => request<T>(path);
+
+const post = <T,>(path: string, body?: unknown): Promise<T> =>
+  request<T>(path, { method: 'POST', body: body === undefined ? undefined : JSON.stringify(body) });
+
 /* ---------- formas de respuesta del worker ---------- */
+
+export interface ApiUser {
+  id: number;
+  email: string;
+  role: 'admin' | 'user';
+}
+
+export interface ApiSession {
+  token: string;
+  expiresAt: number;
+  user: ApiUser;
+}
 
 export interface ApiHealth {
   ok: boolean;
@@ -111,6 +159,16 @@ export interface ApiStrategies {
 }
 
 export const api = {
+  login: (email: string, password: string) =>
+    post<ApiSession>('/api/auth/login', { email, password }),
+
+  register: (email: string, password: string) =>
+    post<ApiSession>('/api/auth/register', { email, password }),
+
+  logout: () => post<{ ok: boolean }>('/api/auth/logout'),
+
+  me: () => get<{ user: ApiUser }>('/api/auth/me'),
+
   health: () => get<ApiHealth>('/api/health'),
 
   candles: (symbol: string, interval: string, limit = 500) =>

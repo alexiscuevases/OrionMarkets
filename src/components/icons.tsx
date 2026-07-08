@@ -24,6 +24,14 @@ export const OrionMark = ({ size = 22, ...p }: P) => (
   </svg>
 );
 
+export const LogoutIcon = ({ size, ...p }: P) => (
+  <svg {...base(size)} {...p}>
+    <path d="M6 2.5H3.5v11H6" />
+    <path d="M10 5l3 3-3 3" />
+    <path d="M13 8H6.5" />
+  </svg>
+);
+
 export const SearchIcon = ({ size, ...p }: P) => (
   <svg {...base(size)} {...p}>
     <circle cx="7" cy="7" r="4.5" />

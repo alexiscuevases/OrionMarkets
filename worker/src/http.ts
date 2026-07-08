@@ -47,8 +47,8 @@ export function jsonWith(
   });
 }
 
-/** Comparación en tiempo constante para el API key. */
-function safeEqual(a: string, b: string): boolean {
+/** Comparación en tiempo constante para tokens y API keys. */
+export function safeEqual(a: string, b: string): boolean {
   const enc = new TextEncoder();
   const ba = enc.encode(a);
   const bb = enc.encode(b);

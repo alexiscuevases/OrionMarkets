@@ -61,6 +61,9 @@
     // en ai_calls; ajustar si cambia el modelo o el precio
     "AI_COST_IN_PER_M": "0.29",
     "AI_COST_OUT_PER_M": "2.25",
+    // Auth: el primer usuario registrado es admin; con "false" nadie más
+    // puede registrarse después (los demás endpoints exigen sesión)
+    "ALLOW_SIGNUPS": "false",
     // Paper trading: cuenta virtual por defecto
     "PAPER_INITIAL_BALANCE": "10000",
     "PAPER_RISK_PCT": "1",

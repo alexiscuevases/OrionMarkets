@@ -8,6 +8,7 @@ import { checkExposure, pipSize, positionPl, positionSize } from '../src/risk.ts
 import { runBacktest } from '../src/backtest.ts';
 import { parseEvents } from '../src/marketContext.ts';
 import { estimateCost, estimateTokens } from '../src/aiLog.ts';
+import { hashPassword, verifyPassword } from '../src/auth.ts';
 import type { Candle } from '../src/types.ts';
 
 let failures = 0;
@@ -251,6 +252,25 @@ console.log('6. aiLog');
   check('estimateTokens ≈ chars/4', estimateTokens('a'.repeat(400)) === 100);
   const cost = estimateCost(1_000_000, 1_000_000, { inPerM: 0.29, outPerM: 2.25 });
   check('estimateCost por millón', Math.abs(cost - 2.54) < 1e-9, `(${cost})`);
+}
+
+/* ---------- 7. auth: hashing de contraseñas ---------- */
+
+console.log('7. auth');
+{
+  const stored = await hashPassword('correct horse battery');
+  check('hash con formato pbkdf2$iter$salt$hash',
+    /^pbkdf2\$100000\$[A-Za-z0-9+/=]+\$[A-Za-z0-9+/=]+$/.test(stored), `(${stored.slice(0, 30)}…)`);
+  check('la contraseña correcta verifica', await verifyPassword('correct horse battery', stored));
+  check('una contraseña incorrecta no verifica', !(await verifyPassword('incorrecta', stored)));
+
+  const again = await hashPassword('correct horse battery');
+  check('salt aleatorio: dos hashes distintos', again !== stored);
+  check('hash corrupto no verifica ni lanza', !(await verifyPassword('x', 'pbkdf2$100000$!!$!!')));
+  check('esquema desconocido se rechaza', !(await verifyPassword('x', 'bcrypt$10$abc$def')));
+  // un atacante no puede inflar las iteraciones por encima del límite del runtime
+  const inflated = stored.replace('$100000$', '$9999999$');
+  check('iteraciones fuera de rango se rechazan', !(await verifyPassword('correct horse battery', inflated)));
 }
 
 console.log(failures === 0 ? '\nTODO OK' : `\n${failures} FALLOS`);

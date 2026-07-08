@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react';
+import { useAuth } from '../auth/useAuth';
 import { SESSIONS, isSessionOpen } from '../data/market';
 import { useEngineStatus } from '../hooks/useMarketData';
-import { BellIcon, GearIcon, OrionMark, SparkleIcon } from './icons';
+import { BellIcon, GearIcon, LogoutIcon, OrionMark, SparkleIcon } from './icons';
 
 export default function TopBar() {
   const [now, setNow] = useState(() => new Date());
   const engine = useEngineStatus();
+  const { user, logout } = useAuth();
 
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 1000);
@@ -55,7 +57,12 @@ export default function TopBar() {
         <button className="icon-btn" title="Ajustes">
           <GearIcon size={15} />
         </button>
-        <div className="avatar">AX</div>
+        <div className="avatar" title={user.email}>
+          {user.email.slice(0, 2).toUpperCase()}
+        </div>
+        <button className="icon-btn" title="Cerrar sesión" onClick={logout}>
+          <LogoutIcon size={15} />
+        </button>
       </div>
     </header>
   );

@@ -7,6 +7,8 @@ export interface Env {
   TWELVEDATA_API_KEY: string;
   /** Secret: Bearer token de los endpoints de administración (Fase 8). */
   ADMIN_API_KEY?: string;
+  /** "true" permite registrarse a más usuarios tras el primero (que es admin). */
+  ALLOW_SIGNUPS?: string;
   AI_MODEL: string;
   AI_MIN_CONFIDENCE: string;
   AI_MAX_PER_RUN: string;

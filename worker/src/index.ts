@@ -1,7 +1,8 @@
 import { aiUsage } from './aiLog';
+import { handleAuth, requireAdminAuth, requireUser } from './auth';
 import { runBacktest, type BacktestParams } from './backtest';
 import { getAiCalibration, getLessons, getMemoryProgress, loadCandles } from './db';
-import { clientIp, corsHeaders, jsonWith, rateLimit, readJsonBody, requireAdmin } from './http';
+import { clientIp, corsHeaders, jsonWith, rateLimit, readJsonBody } from './http';
 import { atr, ema, rsi, slopePct } from './indicators';
 import { parseEvents, upsertEvents } from './marketContext';
 import { healthReport, recentRuns, recordRunSkipped } from './observe';
@@ -16,8 +17,10 @@ export { OrionPipeline } from './workflow';
 
    - scheduled: cron cada 15 min; salta el disparo si hay un pipeline en
      curso (lock KV) para no competir por la cuota de Twelve Data.
-   - fetch: API JSON. Endpoints públicos de lectura con rate limiting por
-     IP; endpoints mutantes/caros tras ADMIN_API_KEY (Fase 8). */
+   - fetch: API JSON. /api/auth/* gestiona usuarios y sesiones en D1;
+     la API de lectura exige sesión iniciada (salvo /api/health) y lleva
+     rate limiting por IP; los endpoints mutantes/caros exigen
+     ADMIN_API_KEY o sesión con rol admin (Fase 8 + auth). */
 
 const CRON_INTERVALS: Record<number, Interval[]> = {
   0: ['1h'],
@@ -69,10 +72,15 @@ export default {
     }
 
     try {
+      /* ============ autenticación (login/registro/sesión) ============ */
+
+      const authResponse = await handleAuth(request, env, pathname, cors);
+      if (authResponse) return authResponse;
+
       /* ================= endpoints de administración ================= */
 
       if (pathname === '/api/run' && request.method === 'POST') {
-        const auth = requireAdmin(request, env);
+        const auth = await requireAdminAuth(request, env);
         if (!auth.ok) return json({ error: auth.error }, auth.status);
 
         const running = await env.CACHE.get(PIPELINE_LOCK_KEY);
@@ -88,7 +96,7 @@ export default {
 
       const runMatch = pathname.match(/^\/api\/run\/([a-zA-Z0-9-]+)$/);
       if (runMatch) {
-        const auth = requireAdmin(request, env);
+        const auth = await requireAdminAuth(request, env);
         if (!auth.ok) return json({ error: auth.error }, auth.status);
         try {
           const instance = await env.PIPELINE.get(runMatch[1]);
@@ -100,7 +108,7 @@ export default {
 
       /* --- backtesting (Fase 2): cómputo bajo demanda, separado de live --- */
       if (pathname === '/api/backtest' && request.method === 'POST') {
-        const auth = requireAdmin(request, env);
+        const auth = await requireAdminAuth(request, env);
         if (!auth.ok) return json({ error: auth.error }, auth.status);
 
         const body = await readJsonBody(request);
@@ -142,7 +150,7 @@ export default {
       }
 
       if (pathname === '/api/paper/reset' && request.method === 'POST') {
-        const auth = requireAdmin(request, env);
+        const auth = await requireAdminAuth(request, env);
         if (!auth.ok) return json({ error: auth.error }, auth.status);
         const body = (await readJsonBody(request)) as
           | { initialBalance?: number; riskPct?: number; minScore?: number }
@@ -156,7 +164,7 @@ export default {
       }
 
       if (pathname === '/api/admin/events' && request.method === 'POST') {
-        const auth = requireAdmin(request, env);
+        const auth = await requireAdminAuth(request, env);
         if (!auth.ok) return json({ error: auth.error }, auth.status);
         const events = parseEvents(await readJsonBody(request));
         if (!events) {
@@ -167,7 +175,7 @@ export default {
       }
 
       if (pathname === '/api/admin/metrics') {
-        const auth = requireAdmin(request, env);
+        const auth = await requireAdminAuth(request, env);
         if (!auth.ok) return json({ error: auth.error }, auth.status);
         const weekAgo = Date.now() - 7 * 86_400_000;
         const [health, usage7d, counts, backtests] = await Promise.all([
@@ -198,7 +206,7 @@ export default {
 
       /* --- dataset etiquetado: material de fine-tuning, no público --- */
       if (pathname === '/api/dataset') {
-        const auth = requireAdmin(request, env);
+        const auth = await requireAdminAuth(request, env);
         if (!auth.ok) return json({ error: auth.error }, auth.status);
         const limit = Math.min(Number(searchParams.get('limit')) || 200, 1000);
         const { results } = await env.DB
@@ -233,6 +241,10 @@ export default {
         await env.CACHE.put('health:report', JSON.stringify(report), { expirationTtl: 60 });
         return json(report);
       }
+
+      /* --- resto de la API de lectura: requiere sesión iniciada --- */
+      const session = await requireUser(request, env);
+      if (!session.ok) return json({ error: session.error }, session.status);
 
       /* --- historial de runs del pipeline (solo lectura) --- */
       if (pathname === '/api/runs') {
