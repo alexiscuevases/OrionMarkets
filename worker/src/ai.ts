@@ -26,18 +26,32 @@ Criterios:
 - Pesa mucho recentOutcomes: es el rendimiento REAL de cada patrón en este
   mercado. Si el patrón de la señal tiene tpRate bajo con muestra >= 15,
   usa "skip" salvo confluencia excepcional del resto del contexto.
+- Pesa mucho similarCases si existe: es el resultado real de situaciones de
+  mercado casi idénticas a esta. Un acierto histórico bajo en casos
+  similares exige "skip" o confianza claramente reducida.
 - Desconfía de señales contra la tendencia del marco superior: exige que
   al menos dos factores más (RSI, volumen, distancia a extremos) la apoyen.
 - Sé conservador: ante la duda, "skip" con confianza baja.`;
+
+/** Bloque adicional del system prompt con las lecciones aprendidas. */
+function lessonsBlock(lessons: string[]): string {
+  if (lessons.length === 0) return '';
+  return (
+    '\n\nLecciones aprendidas de errores anteriores de este sistema ' +
+    '(aplícalas cuando la situación coincida):\n' +
+    lessons.map((l) => `- ${l}`).join('\n')
+  );
+}
 
 export async function evaluateSignal(
   ai: Ai,
   model: string,
   context: SignalContext,
+  lessons: string[] = [],
 ): Promise<AiVerdict> {
   const result = (await ai.run(model as Parameters<Ai['run']>[0], {
     messages: [
-      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'system', content: SYSTEM_PROMPT + lessonsBlock(lessons) },
       { role: 'user', content: JSON.stringify(context, null, 2) },
     ],
     temperature: 0.2,

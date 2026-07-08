@@ -84,6 +84,7 @@ export async function buildContext(
     recentOutcomes: stats.map((s) => ({
       pattern: s.pattern, total: s.total, tpRate: s.tpRate, avgRr: s.avgRr,
     })),
+    similarCases: null, // lo rellena el workflow con la memoria vectorial
     news: null,
     sentiment: null,
   };

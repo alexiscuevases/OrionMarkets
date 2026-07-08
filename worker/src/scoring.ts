@@ -1,4 +1,4 @@
-import type { AiVerdict, ScoreBreakdown, SignalContext } from './types';
+import type { AiVerdict, CalibrationBucket, ScoreBreakdown, SignalContext } from './types';
 
 /* Paso 4 — sistema de scoring.
    Cada dimensión se puntúa 0-5. Las computables salen del dossier
@@ -18,7 +18,21 @@ const WEIGHTS: Record<keyof ScoreBreakdown, number> = {
   history: 1.3,
 };
 
-export function scoreSignal(ctx: SignalContext, ai: AiVerdict): {
+/** Tramo de calibración aplicable a una confianza IA declarada. */
+export function calibrationFor(
+  confidence: number,
+  buckets: CalibrationBucket[],
+): CalibrationBucket | null {
+  const key =
+    confidence < 50 ? 'lt50' : confidence < 65 ? '50-64' : confidence < 80 ? '65-79' : '80plus';
+  return buckets.find((b) => b.bucket === key) ?? null;
+}
+
+export function scoreSignal(
+  ctx: SignalContext,
+  ai: AiVerdict,
+  calib: CalibrationBucket | null = null,
+): {
   breakdown: ScoreBreakdown;
   overall: number;
 } {
@@ -84,12 +98,20 @@ export function scoreSignal(ctx: SignalContext, ai: AiVerdict): {
     trend, momentum, volume, volatility, macro, news, sentiment, institutional, riskReward, history,
   };
 
-  // Media ponderada 0-5 → 0-100, con ajuste IA de ±10 puntos
+  // Media ponderada 0-5 → 0-100, con ajuste IA de ±10 puntos.
+  // El ajuste declarado por la IA se corrige con su calibración empírica:
+  // acierto real de sus veredictos pasados en el mismo tramo de confianza.
+  // El peso de la corrección crece con la muestra (total a partir de 60).
   const totalWeight = Object.values(WEIGHTS).reduce((a, b) => a + b, 0);
   const weighted = (Object.keys(breakdown) as (keyof ScoreBreakdown)[])
     .reduce((sum, k) => sum + breakdown[k] * WEIGHTS[k], 0) / totalWeight;
   const base = (weighted / 5) * 100;
-  const aiAdjust = ai.action === 'skip' ? -10 : ((ai.confidence - 50) / 50) * 10;
+  let aiAdjust = ai.action === 'skip' ? -10 : ((ai.confidence - 50) / 50) * 10;
+  if (calib && calib.n >= 20 && ai.action !== 'skip') {
+    const empirical = Math.max(-10, Math.min(10, calib.expectancy * 12));
+    const w = Math.min(1, calib.n / 60);
+    aiAdjust = aiAdjust * (1 - w) + empirical * w;
+  }
 
   return {
     breakdown,

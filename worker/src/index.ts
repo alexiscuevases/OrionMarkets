@@ -1,3 +1,4 @@
+import { getAiCalibration, getLessons, getMemoryProgress } from './db';
 import { INTERVALS, SYMBOLS, type Env, type Interval } from './types';
 export { OrionPipeline } from './workflow';
 
@@ -150,6 +151,34 @@ export default {
         .bind(limit)
         .all();
       return json({ opportunities: results });
+    }
+
+    /* --- estado del aprendizaje: lecciones, calibración y memoria --- */
+    if (pathname === '/api/learning') {
+      const [lessons, calibration, memory] = await Promise.all([
+        getLessons(env.DB, 20),
+        getAiCalibration(env.DB),
+        getMemoryProgress(env.DB),
+      ]);
+      return json({ lessons, calibration, memory });
+    }
+
+    /* --- dataset etiquetado (contexto → veredicto IA → resultado real);
+       base para un futuro fine-tuning LoRA cuando haya volumen --- */
+    if (pathname === '/api/dataset') {
+      const limit = Math.min(Number(searchParams.get('limit')) || 200, 1000);
+      const { results } = await env.DB
+        .prepare(
+          `SELECT e.context_json AS contextJson, e.ai_action AS aiAction,
+                  e.ai_confidence AS aiConfidence, e.ai_thesis AS aiThesis,
+                  s.outcome, s.rr
+           FROM evaluations e JOIN signals s ON s.sig_key = e.sig_key
+           WHERE s.outcome IN ('tp_hit', 'sl_hit') AND e.model NOT LIKE 'gate:%'
+           ORDER BY s.outcome_ts DESC LIMIT ?`,
+        )
+        .bind(limit)
+        .all();
+      return json({ examples: results });
     }
 
     /* --- disparo manual del pipeline + consulta de estado --- */

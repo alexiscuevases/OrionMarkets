@@ -2,6 +2,7 @@ export interface Env {
   DB: D1Database;
   CACHE: KVNamespace;
   AI: Ai;
+  VECTOR_INDEX: Vectorize;
   PIPELINE: Workflow;
   TWELVEDATA_API_KEY: string;
   AI_MODEL: string;
@@ -78,8 +79,28 @@ export interface SignalContext {
   distanceToRecentLow: number;  // %
   correlations: Record<string, number>; // vs otros pares del universo
   recentOutcomes: { pattern: string; total: number; tpRate: number; avgRr: number }[];
+  /** Resumen de casos históricos similares (memoria vectorial); null sin datos. */
+  similarCases: string | null;
   news: string | null;      // pendiente de proveedor de noticias
   sentiment: string | null; // pendiente de proveedor de sentimiento
+}
+
+/** Lección destilada por la IA a partir de sus propios errores. */
+export interface Lesson {
+  id: number;
+  scope: string; // 'global' o 'SYMBOL|interval'
+  lesson: string;
+  support: number; // nº de casos que la respaldan
+  createdAt: number;
+}
+
+/** Calibración empírica de la confianza de la IA por tramo. */
+export interface CalibrationBucket {
+  bucket: string;     // 'lt50' | '50-64' | '65-79' | '80plus'
+  n: number;          // cierres con veredicto buy/sell en el tramo
+  tpRate: number;     // acierto real
+  avgRr: number;
+  expectancy: number; // tpRate·avgRr − (1 − tpRate), en R
 }
 
 export interface AiVerdict {

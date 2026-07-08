@@ -5,17 +5,22 @@ import {
   type WorkflowStepConfig,
 } from 'cloudflare:workers';
 import {
-  getCursor, getOpenSignals, getUnevaluatedSignals, insertSignals,
-  loadCandles, setCursor, updateOutcomes, upsertCandles,
+  addLessons, getAiCalibration, getAiMistakes, getCursor, getLessons,
+  getOpenSignals, getUnevaluatedSignals, getUnindexedClosed, insertSignals,
+  loadCandles, markIndexed, setCursor, updateOutcomes, upsertCandles,
 } from './db';
 import { fetchSeries } from './twelvedata';
 import { detectAll, profileFor, resolveOutcome } from './patterns';
 import { buildContext } from './enrich';
 import { evaluateSignal } from './ai';
-import { scoreSignal } from './scoring';
+import { calibrationFor, scoreSignal } from './scoring';
+import {
+  caseText, embedTexts, featuresFromCandles, featuresFromContext,
+  reflectOnMistakes, summarizeSimilarCases,
+} from './learn';
 import {
   HISTORY_START, INTERVALS, INTERVAL_MS, SYMBOLS,
-  type Env, type Interval, type SignalContext, type AiVerdict,
+  type CalibrationBucket, type Env, type Interval, type SignalContext, type AiVerdict,
 } from './types';
 
 export interface PipelineParams {
@@ -24,16 +29,20 @@ export interface PipelineParams {
   intervals?: Interval[];
 }
 
-/* Pipeline horario en 4 fases (un solo workflow → orden garantizado,
+/* Pipeline horario en 5 fases (un solo workflow → orden garantizado,
    reintentos por paso y estado persistido):
 
-   1. INGESTA    Twelve Data → D1 (incremental por símbolo+intervalo,
-                 espaciado para respetar 8 créditos/min del plan free)
-   2. DETECCIÓN  algoritmos deterministas sobre TODO el histórico
-                 + resolución de resultados de señales abiertas (TP/SL)
-   3. IA         dossier de contexto + Workers AI, solo para señales
-                 con confianza determinista >= AI_MIN_CONFIDENCE
-   4. SCORING    puntuación multidimensional 0-100 → D1 + resumen en KV */
+   1. INGESTA      Twelve Data → D1 (incremental por símbolo+intervalo,
+                   espaciado para respetar 8 créditos/min del plan free)
+   2. DETECCIÓN    algoritmos deterministas sobre TODO el histórico
+                   + resolución de resultados de señales abiertas (TP/SL)
+   3. IA           dossier + gate por expectancia + memoria de casos
+                   similares + lecciones aprendidas → Workers AI, solo
+                   señales con confianza determinista >= AI_MIN_CONFIDENCE
+   4. SCORING      puntuación multidimensional 0-100 (ajuste IA calibrado
+                   con su acierto real) → D1 + resumen en KV
+   5. APRENDIZAJE  indexa cierres en Vectorize (memoria de casos) y
+                   destila lecciones de los errores IA (reflexión) */
 
 const RETRY: WorkflowStepConfig = {
   retries: { limit: 4, delay: '20 seconds', backoff: 'exponential' },
@@ -141,6 +150,13 @@ export class OrionPipeline extends WorkflowEntrypoint<Env, PipelineParams> {
       getUnevaluatedSignals(db, minConfidence, maxPerRun),
     );
 
+    // conocimiento acumulado del sistema: lecciones destiladas de errores
+    // pasados + calibración empírica de la confianza de la IA
+    const knowledge = await step.do('carga lecciones y calibración', RETRY, async () => ({
+      lessons: await getLessons(db),
+      calibration: await getAiCalibration(db),
+    }));
+
     let evaluated = 0;
     let topScore = 0;
 
@@ -148,6 +164,23 @@ export class OrionPipeline extends WorkflowEntrypoint<Env, PipelineParams> {
       const dossier = await step.do(`dossier ${sig.sigKey}`, RETRY, async () => {
         const candles = await loadCandles(db, sig.symbol, sig.interval, 3000);
         return buildContext(db, sig, candles);
+      });
+
+      // memoria de casos: situaciones históricas casi idénticas y su
+      // resultado real; si el índice aún no existe se evalúa sin memoria
+      dossier.similarCases = await step.do(`similares ${sig.sigKey}`, async () => {
+        try {
+          const [vector] = await embedTexts(
+            this.env.AI, [caseText(featuresFromContext(dossier))],
+          );
+          const res = await this.env.VECTOR_INDEX.query(vector, {
+            topK: 8,
+            returnMetadata: 'all',
+          });
+          return summarizeSimilarCases(res.matches);
+        } catch {
+          return null;
+        }
       });
 
       // gate por historial: si el patrón acumula expectancia negativa real
@@ -172,13 +205,19 @@ export class OrionPipeline extends WorkflowEntrypoint<Env, PipelineParams> {
         continue;
       }
 
+      // lecciones aplicables a esta señal: globales + las de su mercado
+      const lessons = knowledge.lessons
+        .filter((l) => l.scope === 'global' || l.scope === `${sig.symbol}|${sig.interval}`)
+        .map((l) => l.lesson)
+        .slice(0, 8);
+
       // si la IA falla definitivamente (reintentos agotados) se registra un
       // skip conservador y el pipeline continúa con el resto de señales en
       // lugar de abortar toda la ejecución
       let verdict: AiVerdict;
       try {
         verdict = await step.do(`ia ${sig.sigKey}`, AI_RETRY, async () =>
-          evaluateSignal(this.env.AI, this.env.AI_MODEL, dossier),
+          evaluateSignal(this.env.AI, this.env.AI_MODEL, dossier, lessons),
         );
       } catch {
         verdict = {
@@ -194,11 +233,105 @@ export class OrionPipeline extends WorkflowEntrypoint<Env, PipelineParams> {
       /* ---------- FASE 4 · Scoring ---------- */
 
       const overall = await step.do(`scoring ${sig.sigKey}`, RETRY, async () =>
-        persistEvaluation(db, this.env.AI_MODEL, sig.sigKey, dossier, verdict),
+        persistEvaluation(
+          db, this.env.AI_MODEL, sig.sigKey, dossier, verdict,
+          calibrationFor(verdict.confidence, knowledge.calibration),
+        ),
       );
 
       evaluated++;
       topScore = Math.max(topScore, overall);
+    }
+
+    /* ---------- FASE 5 · Aprendizaje ---------- */
+
+    // 5a. memoria de casos: embeber e indexar señales cerradas pendientes
+    // (backfill incremental del histórico + los cierres nuevos de cada run)
+    const indexedCases = await step.do('indexa casos cerrados', RETRY, async () => {
+      const pendingIdx = await getUnindexedClosed(db, 80);
+      if (pendingIdx.length === 0) return 0;
+
+      // agrupadas por mercado para cargar las velas una sola vez por grupo
+      const groups = new Map<string, typeof pendingIdx>();
+      for (const s of pendingIdx) {
+        const k = `${s.symbol}|${s.interval}`;
+        let g = groups.get(k);
+        if (!g) { g = []; groups.set(k, g); }
+        g.push(s);
+      }
+
+      const vectors: VectorizeVector[] = [];
+      const done: string[] = [];
+      for (const group of groups.values()) {
+        const candles = await loadCandles(db, group[0].symbol, group[0].interval, 50_000);
+        const cases: { sigKey: string; text: string; meta: Record<string, string | number> }[] = [];
+        for (const s of group) {
+          // sin velas suficientes para las features → se marca igualmente
+          // como indexada para no reintentarla en cada pasada
+          done.push(s.sigKey);
+          const f = featuresFromCandles(s, candles);
+          if (!f) continue;
+          const meta: Record<string, string | number> = {
+            outcome: s.outcome,
+            pattern: s.pattern,
+            symbol: s.symbol,
+            interval: s.interval,
+            direction: s.direction,
+            rr: s.rr,
+          };
+          if (s.aiAction) {
+            meta.aiAction = s.aiAction;
+            meta.aiConfidence = s.aiConfidence ?? 0;
+          }
+          cases.push({ sigKey: s.sigKey, text: caseText(f), meta });
+        }
+        if (cases.length > 0) {
+          const embeddings = await embedTexts(this.env.AI, cases.map((c) => c.text));
+          cases.forEach((c, i) => {
+            vectors.push({ id: c.sigKey, values: embeddings[i], metadata: c.meta });
+          });
+        }
+      }
+
+      try {
+        if (vectors.length > 0) await this.env.VECTOR_INDEX.upsert(vectors);
+      } catch {
+        return 0; // índice aún no creado: se reintenta en la próxima pasada
+      }
+      await markIndexed(db, done);
+      return vectors.length;
+    });
+
+    // 5b. reflexión: destilar lecciones de los errores IA cerrados desde la
+    // última reflexión; un fallo aquí nunca tumba el pipeline
+    let newLessons = 0;
+    try {
+      const cursor = await step.do('cursor de reflexión', async () =>
+        Number((await this.env.CACHE.get('learn:reflect_cursor')) ?? '0'),
+      );
+      const mistakes = await step.do('busca errores IA', RETRY, async () =>
+        getAiMistakes(db, cursor, 20),
+      );
+      if (mistakes.length >= 4) {
+        newLessons = await step.do('reflexión sobre errores', AI_RETRY, async () => {
+          const lessons = await reflectOnMistakes(
+            this.env.AI,
+            this.env.AI_MODEL,
+            mistakes.map(({ outcomeTs: _ts, ...c }) => c),
+          );
+          if (lessons.length > 0) {
+            await addLessons(db, lessons.map((l) => ({ ...l, support: mistakes.length })));
+          }
+          // el cursor avanza aunque no salgan lecciones: esos casos ya se vieron
+          await this.env.CACHE.put(
+            'learn:reflect_cursor',
+            String(mistakes[mistakes.length - 1].outcomeTs),
+          );
+          return lessons.length;
+        });
+      }
+    } catch {
+      newLessons = 0;
     }
 
     /* ---------- Resumen para el frontend ---------- */
@@ -213,11 +346,13 @@ export class OrionPipeline extends WorkflowEntrypoint<Env, PipelineParams> {
           newSignals,
           evaluated,
           topScore,
+          indexedCases,
+          newLessons,
         }),
       );
     });
 
-    return { ingested, newSignals, evaluated, topScore };
+    return { ingested, newSignals, evaluated, topScore, indexedCases, newLessons };
   }
 }
 
@@ -227,8 +362,9 @@ async function persistEvaluation(
   sigKey: string,
   dossier: SignalContext,
   verdict: AiVerdict,
+  calib: CalibrationBucket | null = null,
 ): Promise<number> {
-  const { breakdown, overall } = scoreSignal(dossier, verdict);
+  const { breakdown, overall } = scoreSignal(dossier, verdict, calib);
   await db
     .prepare(
       `INSERT OR REPLACE INTO evaluations

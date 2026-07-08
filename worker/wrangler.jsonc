@@ -36,6 +36,15 @@
 
   "ai": { "binding": "AI" },
 
+  // Memoria de casos: embeddings de señales cerradas (dossier → bge-m3).
+  // Crear una vez: npx wrangler vectorize create orion-cases --dimensions=1024 --metric=cosine
+  "vectorize": [
+    {
+      "binding": "VECTOR_INDEX",
+      "index_name": "orion-cases"
+    }
+  ],
+
   "vars": {
     // Modelo de Workers AI para la evaluación de señales
     "AI_MODEL": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",

@@ -1,4 +1,5 @@
-import type { Candle, DetectedSignal, Outcome, SignalRow } from './types';
+import type { CalibrationBucket, Candle, DetectedSignal, Lesson, Outcome, SignalRow } from './types';
+import type { MistakeCase } from './learn';
 
 /* Acceso a D1. Los inserts van en lotes: D1 limita los parámetros
    por sentencia, así que agrupamos 12 filas (96 binds) por INSERT. */
@@ -189,4 +190,142 @@ export async function getPatternStats(
     .bind(symbol, interval)
     .all<{ pattern: string; total: number; tpRate: number; avgRr: number }>();
   return results;
+}
+
+/* ---------- aprendizaje continuo ---------- */
+
+/** Calibración empírica de la confianza IA: acierto real por tramo de
+    confianza declarada, solo veredictos buy/sell ya cerrados y excluyendo
+    los descartes automáticos del gate. */
+export async function getAiCalibration(db: D1Database): Promise<CalibrationBucket[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT CASE
+                WHEN e.ai_confidence < 50 THEN 'lt50'
+                WHEN e.ai_confidence < 65 THEN '50-64'
+                WHEN e.ai_confidence < 80 THEN '65-79'
+                ELSE '80plus'
+              END AS bucket,
+              COUNT(*) AS n,
+              ROUND(AVG(CASE WHEN s.outcome = 'tp_hit' THEN 1.0 ELSE 0 END), 3) AS tpRate,
+              ROUND(AVG(s.rr), 2) AS avgRr
+       FROM evaluations e
+       JOIN signals s ON s.sig_key = e.sig_key
+       WHERE e.ai_action IN ('buy', 'sell')
+         AND e.model NOT LIKE 'gate:%'
+         AND s.outcome IN ('tp_hit', 'sl_hit')
+       GROUP BY bucket`,
+    )
+    .all<{ bucket: string; n: number; tpRate: number; avgRr: number }>();
+  return results.map((r) => ({
+    ...r,
+    expectancy: Math.round((r.tpRate * r.avgRr - (1 - r.tpRate)) * 100) / 100,
+  }));
+}
+
+/** Lecciones vigentes, más recientes primero. */
+export async function getLessons(db: D1Database, limit = 24): Promise<Lesson[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT id, scope, lesson, support, created_at AS createdAt
+       FROM lessons ORDER BY created_at DESC, id DESC LIMIT ?`,
+    )
+    .bind(limit)
+    .all<Lesson>();
+  return results;
+}
+
+/** Inserta lecciones nuevas y poda: se conservan las 15 más recientes. */
+export async function addLessons(
+  db: D1Database,
+  lessons: { scope: string; lesson: string; support: number }[],
+): Promise<void> {
+  if (lessons.length === 0) return;
+  const now = Date.now();
+  const stmts = lessons.map((l) =>
+    db
+      .prepare('INSERT INTO lessons (scope, lesson, support, created_at) VALUES (?, ?, ?, ?)')
+      .bind(l.scope, l.lesson, l.support, now),
+  );
+  stmts.push(
+    db.prepare(
+      `DELETE FROM lessons WHERE id NOT IN
+         (SELECT id FROM lessons ORDER BY created_at DESC, id DESC LIMIT 15)`,
+    ),
+  );
+  await db.batch(stmts);
+}
+
+/** Errores de la IA cerrados después de `sinceTs`: validó y salió SL, o
+    descartó (sin gate) y salió TP. Material de la reflexión. */
+export async function getAiMistakes(
+  db: D1Database,
+  sinceTs: number,
+  limit = 20,
+): Promise<(MistakeCase & { outcomeTs: number })[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT s.symbol, s.interval, s.pattern, s.direction, s.rr,
+              e.ai_action AS aiAction, e.ai_confidence AS aiConfidence,
+              SUBSTR(e.ai_thesis, 1, 200) AS aiThesis,
+              s.outcome, s.outcome_ts AS outcomeTs
+       FROM evaluations e
+       JOIN signals s ON s.sig_key = e.sig_key
+       WHERE e.model NOT LIKE 'gate:%'
+         AND s.outcome_ts > ?
+         AND ((e.ai_action IN ('buy', 'sell') AND s.outcome = 'sl_hit')
+           OR (e.ai_action = 'skip' AND s.outcome = 'tp_hit'))
+       ORDER BY s.outcome_ts ASC
+       LIMIT ?`,
+    )
+    .bind(sinceTs, limit)
+    .all<MistakeCase & { outcomeTs: number }>();
+  return results;
+}
+
+/** Señales cerradas pendientes de indexar en la memoria vectorial,
+    con su evaluación IA si existe. Ordenadas para agrupar por mercado. */
+export async function getUnindexedClosed(
+  db: D1Database,
+  limit: number,
+): Promise<(SignalRow & { aiAction: string | null; aiConfidence: number | null })[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT s.sig_key AS sigKey, s.symbol, s.interval, s.ts, s.pattern, s.direction,
+              s.entry, s.stop, s.target, s.rr, s.confidence, s.outcome, s.outcome_ts AS outcomeTs,
+              e.ai_action AS aiAction, e.ai_confidence AS aiConfidence
+       FROM signals s
+       LEFT JOIN evaluations e ON e.sig_key = s.sig_key
+       WHERE s.outcome IN ('tp_hit', 'sl_hit') AND s.indexed_at IS NULL
+       ORDER BY s.symbol, s.interval, s.ts
+       LIMIT ?`,
+    )
+    .bind(limit)
+    .all<SignalRow & { aiAction: string | null; aiConfidence: number | null }>();
+  return results;
+}
+
+export async function markIndexed(db: D1Database, sigKeys: string[]): Promise<void> {
+  if (sigKeys.length === 0) return;
+  const now = Date.now();
+  const stmts = sigKeys.map((k) =>
+    db.prepare('UPDATE signals SET indexed_at = ? WHERE sig_key = ?').bind(now, k),
+  );
+  for (let i = 0; i < stmts.length; i += STMTS_PER_BATCH) {
+    await db.batch(stmts.slice(i, i + STMTS_PER_BATCH));
+  }
+}
+
+/** Progreso de la memoria vectorial (para /api/learning). */
+export async function getMemoryProgress(
+  db: D1Database,
+): Promise<{ indexed: number; totalClosed: number }> {
+  const row = await db
+    .prepare(
+      `SELECT SUM(CASE WHEN indexed_at IS NOT NULL THEN 1 ELSE 0 END) AS indexed,
+              COUNT(*) AS totalClosed
+       FROM signals WHERE outcome IN ('tp_hit', 'sl_hit')`,
+    )
+    .first<{ indexed: number | null; totalClosed: number }>();
+  return { indexed: row?.indexed ?? 0, totalClosed: row?.totalClosed ?? 0 };
 }

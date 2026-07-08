@@ -4,7 +4,8 @@
 
 import { detectAll, profileFor, resolveOutcome } from '../src/patterns.ts';
 import { parseVerdict } from '../src/ai.ts';
-import { scoreSignal } from '../src/scoring.ts';
+import { calibrationFor, scoreSignal } from '../src/scoring.ts';
+import { caseText, featuresFromContext, summarizeSimilarCases } from '../src/learn.ts';
 import type { Candle, SignalContext } from '../src/types.ts';
 
 let failures = 0;
@@ -92,7 +93,7 @@ const ctx: SignalContext = {
   distanceToRecentHigh: 0.8, distanceToRecentLow: 0.4,
   correlations: { GBPUSD: 0.6, USDJPY: -0.3 },
   recentOutcomes: [{ pattern: 'Doble suelo', total: 10, tpRate: 0.6, avgRr: 2 }],
-  news: null, sentiment: null,
+  similarCases: null, news: null, sentiment: null,
 };
 const good = parseVerdict(
   'texto previo {"action":"buy","confidence":78,"thesis":"ok","risks":"r","sentimentScore":4,"newsScore":3} texto posterior',
@@ -118,6 +119,35 @@ const badHistory = scoreSignal(
 );
 check('historial perdedor del patrón penaliza el score',
   badHistory.overall < strong.overall, `(${badHistory.overall} < ${strong.overall})`);
+
+console.log('6. aprendizaje');
+const calib = [
+  { bucket: '65-79', n: 60, tpRate: 0.2, avgRr: 2, expectancy: -0.4 },
+  { bucket: '80plus', n: 5, tpRate: 0.9, avgRr: 2, expectancy: 1.7 },
+];
+check('calibrationFor elige el tramo de la confianza',
+  calibrationFor(78, calib)?.bucket === '65-79' && calibrationFor(30, calib) === null);
+const calibrated = scoreSignal(ctx, good, calib[0]);
+check('IA sobreconfiada según su historial → score recortado',
+  calibrated.overall < strong.overall, `(${calibrated.overall} < ${strong.overall})`);
+check('muestra pequeña no altera el score',
+  scoreSignal(ctx, { ...good, confidence: 85 }, calib[1]).overall ===
+  scoreSignal(ctx, { ...good, confidence: 85 }).overall);
+
+const feats = featuresFromContext(ctx);
+check('texto de caso determinista y con features clave',
+  caseText(feats) === caseText(featuresFromContext(ctx)) &&
+  caseText(feats).includes('Doble suelo') && caseText(feats).includes('EMA200'));
+check('similares insuficientes → null',
+  summarizeSimilarCases([{ score: 0.9, metadata: { outcome: 'tp_hit' } }]) === null);
+const summary = summarizeSimilarCases([
+  { score: 0.9, metadata: { outcome: 'tp_hit' } },
+  { score: 0.85, metadata: { outcome: 'sl_hit', aiAction: 'buy' } },
+  { score: 0.8, metadata: { outcome: 'sl_hit', aiAction: 'buy' } },
+  { score: 0.5, metadata: { outcome: 'tp_hit' } }, // por debajo del umbral: fuera
+]);
+check('resumen de similares con acierto y errores IA',
+  summary !== null && summary.includes('33%') && summary.includes('2'), `(${summary})`);
 
 console.log(failures === 0 ? '\nTODO OK' : `\n${failures} FALLOS`);
 process.exit(failures === 0 ? 0 : 1);
