@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import MainChart, { type ChartKind } from './MainChart';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import MainChart, { type ChartKind, type Indicators } from './MainChart';
 import {
   TIMEFRAMES, pairBySymbol, quoteFromCandles, fmtPct, fmtPips,
   type AISignal, type SeriesData,
@@ -26,6 +26,13 @@ const KINDS: { id: ChartKind; label: string; icon: typeof CandlesIcon }[] = [
   { id: 'ohlc', label: 'Barras OHLC', icon: OhlcIcon },
   { id: 'line', label: 'Línea', icon: LineIcon },
   { id: 'area', label: 'Área', icon: AreaIcon },
+];
+
+/* Indicadores disponibles; se activan uno a uno desde el desplegable. */
+const INDICATORS: { id: keyof Indicators; label: string; color: string }[] = [
+  { id: 'ema20', label: 'EMA 20', color: 'var(--series-1)' },
+  { id: 'ema50', label: 'EMA 50', color: 'var(--series-2)' },
+  { id: 'rsi14', label: 'RSI 14', color: 'var(--series-3)' },
 ];
 
 /* Qué señales se pintan sobre el gráfico. Por defecto solo las activas:
@@ -56,8 +63,52 @@ export default function ChartPanel({
   const [kind, setKind] = useState<ChartKind>('candlestick');
   const [showSignals, setShowSignals] = useState(true);
   const [signalFilter, setSignalFilter] = useState<SignalFilter>('activas');
-  const [showEMA, setShowEMA] = useState(true);
-  const [showRSI, setShowRSI] = useState(true);
+  const [indicators, setIndicators] = useState<Indicators>({
+    ema20: true,
+    ema50: true,
+    rsi14: true,
+  });
+
+  /* Desplegable de indicadores. La toolbar hace scroll horizontal (recorta
+     lo posicionado dentro), así que el menú va en `fixed` anclado al botón. */
+  const [indMenu, setIndMenu] = useState<{ top: number; right: number } | null>(null);
+  const indBtnRef = useRef<HTMLButtonElement>(null);
+  const indMenuRef = useRef<HTMLDivElement>(null);
+
+  const toggleIndMenu = () => {
+    if (indMenu) {
+      setIndMenu(null);
+      return;
+    }
+    const r = indBtnRef.current?.getBoundingClientRect();
+    if (r) setIndMenu({ top: r.bottom + 6, right: Math.max(8, window.innerWidth - r.right) });
+  };
+
+  useEffect(() => {
+    if (!indMenu) return;
+    const onPointerDown = (e: PointerEvent) => {
+      const t = e.target as Node;
+      if (indMenuRef.current?.contains(t) || indBtnRef.current?.contains(t)) return;
+      setIndMenu(null);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setIndMenu(null);
+    };
+    const onResize = () => setIndMenu(null);
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    window.addEventListener('resize', onResize);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('resize', onResize);
+    };
+  }, [indMenu]);
+
+  const toggleIndicator = (id: keyof Indicators) =>
+    setIndicators((prev) => ({ ...prev, [id]: !prev[id] }));
+
+  const activeIndicators = INDICATORS.filter((i) => indicators[i.id]).length;
 
   // señales que pasan el filtro; la señal enfocada se pinta siempre
   const visibleSignals = useMemo(() => {
@@ -176,20 +227,42 @@ export default function ChartPanel({
         <span className="toolbar-sep" />
 
         <button
-          className={`tool-toggle ${showEMA ? 'tool-toggle--on' : ''}`}
-          onClick={() => setShowEMA((v) => !v)}
+          ref={indBtnRef}
+          className={`tool-toggle ${indMenu ? 'tool-toggle--on' : ''}`}
+          aria-haspopup="menu"
+          aria-expanded={indMenu !== null}
+          onClick={toggleIndMenu}
         >
-          <LayersIcon size={13} />
-          <i className="dot" style={{ background: 'var(--series-1)' }} /> EMA 20
-          <i className="dot" style={{ background: 'var(--series-2)' }} /> EMA 50
+          <LayersIcon size={13} /> Indicadores
+          <span className="num">{activeIndicators}</span>
         </button>
-        <button
-          className={`tool-toggle ${showRSI ? 'tool-toggle--on' : ''}`}
-          onClick={() => setShowRSI((v) => !v)}
-        >
-          <LayersIcon size={13} />
-          <i className="dot" style={{ background: 'var(--series-3)' }} /> RSI 14
-        </button>
+        {indMenu && (
+          <div
+            ref={indMenuRef}
+            className="ind-menu"
+            role="menu"
+            style={{ top: indMenu.top, right: indMenu.right }}
+          >
+            {INDICATORS.map((ind) => {
+              const on = indicators[ind.id];
+              return (
+                <button
+                  key={ind.id}
+                  className={`ind-menu__row ${on ? '' : 'ind-menu__row--off'}`}
+                  role="menuitemcheckbox"
+                  aria-checked={on}
+                  onClick={() => toggleIndicator(ind.id)}
+                >
+                  <i className="dot" style={{ background: ind.color }} />
+                  {ind.label}
+                  <span className={`switch ${on ? 'switch--on' : ''}`}>
+                    <span className="switch__knob" />
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
 
         <span className="toolbar-spacer" />
 
@@ -237,8 +310,7 @@ export default function ChartPanel({
             tf={tf}
             kind={kind}
             showSignals={showSignals}
-            showEMA={showEMA}
-            showRSI={showRSI}
+            indicators={indicators}
             activeSignal={activeSignal}
             series={series}
             signals={visibleSignals}

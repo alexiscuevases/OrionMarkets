@@ -9,21 +9,28 @@ applyOrionTheme();
 
 export type ChartKind = 'candlestick' | 'ohlc' | 'line' | 'area';
 
+/** Indicadores superpuestos al gráfico, activables uno a uno. */
+export interface Indicators {
+  ema20: boolean;
+  ema50: boolean;
+  rsi14: boolean;
+}
+
 interface Props {
   symbol: string;
   tf: string;
   kind: ChartKind;
   showSignals: boolean;
-  showEMA: boolean;
-  showRSI: boolean;
+  indicators: Indicators;
   activeSignal: AISignal | null;
   series: SeriesData;
   signals: AISignal[];
 }
 
 export default function MainChart({
-  symbol, tf, kind, showSignals, showEMA, showRSI, activeSignal, series, signals,
+  symbol, tf, kind, showSignals, indicators, activeSignal, series, signals,
 }: Props) {
+  const { ema20, ema50, rsi14 } = indicators;
   const ref = useRef<HTMLDivElement>(null);
   const chartRef = useRef<Highcharts.Chart | null>(null);
 
@@ -74,8 +81,8 @@ export default function MainChart({
           text: `<b>${s.pattern}</b><br/>Confianza ${s.confidence}% · ${fmtDateTime(s.time)}<br/>${outcomeLabel(s)}`,
         }));
 
-    const priceHeight = showRSI ? (hasVolume ? '56%' : '68%') : hasVolume ? '78%' : '96%';
-    const volTop = showRSI ? '58%' : '80%';
+    const priceHeight = rsi14 ? (hasVolume ? '56%' : '68%') : hasVolume ? '78%' : '96%';
+    const volTop = rsi14 ? '58%' : '80%';
     const rsiAxisIndex = hasVolume ? 2 : 1;
 
     const signalPlotLines: Highcharts.YAxisPlotLinesOptions[] = activeSignal
@@ -141,22 +148,23 @@ export default function MainChart({
       });
     }
 
-    if (showEMA) {
-      chartSeries.push(
-        {
-          type: 'ema', linkedTo: 'price', params: { period: 20 },
-          name: 'EMA 20', color: ORION.series1, lineWidth: 1.4,
-          marker: { enabled: false },
-        },
-        {
-          type: 'ema', linkedTo: 'price', params: { period: 50 },
-          name: 'EMA 50', color: ORION.series2, lineWidth: 1.4,
-          marker: { enabled: false },
-        },
-      );
+    if (ema20) {
+      chartSeries.push({
+        type: 'ema', linkedTo: 'price', params: { period: 20 },
+        name: 'EMA 20', color: ORION.series1, lineWidth: 1.4,
+        marker: { enabled: false },
+      });
     }
 
-    if (showRSI) {
+    if (ema50) {
+      chartSeries.push({
+        type: 'ema', linkedTo: 'price', params: { period: 50 },
+        name: 'EMA 50', color: ORION.series2, lineWidth: 1.4,
+        marker: { enabled: false },
+      });
+    }
+
+    if (rsi14) {
       chartSeries.push({
         type: 'rsi', linkedTo: 'price', yAxis: rsiAxisIndex,
         name: 'RSI 14', color: ORION.series3, lineWidth: 1.4,
@@ -260,7 +268,7 @@ export default function MainChart({
       });
     }
 
-    if (showRSI) {
+    if (rsi14) {
       yAxes.push({
         top: hasVolume ? '74%' : '72%',
         height: hasVolume ? '26%' : '28%',
@@ -331,7 +339,7 @@ export default function MainChart({
       chart.destroy();
       chartRef.current = null;
     };
-  }, [symbol, tf, kind, showSignals, showEMA, showRSI, activeSignal, series, signals]);
+  }, [symbol, tf, kind, showSignals, ema20, ema50, rsi14, activeSignal, series, signals]);
 
   // el gráfico debe seguir el tamaño de su contenedor
   useEffect(() => {

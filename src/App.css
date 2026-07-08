@@ -614,6 +614,47 @@
   background: var(--nebula-glow);
 }
 
+/* desplegable de indicadores: fixed porque la toolbar recorta (overflow-x) */
+.ind-menu {
+  position: fixed;
+  z-index: 40;
+  min-width: 172px;
+  padding: 5px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--line-strong);
+  background: var(--bg-raised);
+  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ind-menu__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: var(--r-sm);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ink-hi);
+  white-space: nowrap;
+}
+
+.ind-menu__row:hover { background: var(--bg-hover); }
+
+.ind-menu__row .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  flex: none;
+}
+
+.ind-menu__row--off { color: var(--ink-low); }
+.ind-menu__row--off .dot { opacity: 0.35; }
+
+.ind-menu__row .switch { margin-left: auto; }
+
 /* chip de señal en foco: indica qué señal se está viendo y permite salir */
 .signal-focus-chip {
   display: inline-flex;
