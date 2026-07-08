@@ -67,7 +67,7 @@ export default function BottomPanel({ signals, onView, onAnalyze, emptyMessage }
                 const pair = pairBySymbol(s.symbol);
                 const buy = s.direction === 'buy';
                 return (
-                  <tr key={s.id}>
+                  <tr key={s.id} className={s.status === 'Descartada' ? 'row--muted' : undefined}>
                     <td className="num dim">{fmtDateTime(s.time)}</td>
                     <td className="strong">{s.symbol}</td>
                     <td className="num dim">{s.tf}</td>

@@ -207,7 +207,8 @@ function adaptSignal(s: ApiSignal, tfOverride?: string): AISignal {
   let status: AISignal['status'];
   let resultPips: number | undefined;
   if (s.outcome === 'open') {
-    status = evaluated ? 'Activa' : 'Pendiente';
+    // una señal abierta que la IA descartó no es una oportunidad activa
+    status = !evaluated ? 'Pendiente' : s.aiAction === 'skip' ? 'Descartada' : 'Activa';
   } else {
     status = 'Cerrada';
     resultPips =

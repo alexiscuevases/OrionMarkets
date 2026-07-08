@@ -142,7 +142,7 @@ export interface AISignal {
   entry: number;
   stop: number;
   target: number;
-  status: 'Activa' | 'Pendiente' | 'Cerrada';
+  status: 'Activa' | 'Pendiente' | 'Descartada' | 'Cerrada';
   outcome?: 'open' | 'tp_hit' | 'sl_hit' | 'expired';
   resultPips?: number;
   live?: boolean;

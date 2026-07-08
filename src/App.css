@@ -1271,6 +1271,10 @@
 
 .grid-table tbody tr:hover { background: var(--bg-hover); }
 
+/* señal abierta pero descartada por la IA: presente, no protagonista */
+.row--muted td { opacity: 0.55; }
+.row--muted td:last-child { opacity: 1; }
+
 .ta-r { text-align: right; }
 .dim { color: var(--ink-low); }
 .strong { font-weight: 700; }
