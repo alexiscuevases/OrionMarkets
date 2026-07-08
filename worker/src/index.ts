@@ -122,10 +122,12 @@ export default {
            FROM signals WHERE ts >= ? GROUP BY pattern`,
         ).bind(since),
         env.DB.prepare(
-          `SELECT pattern, outcome, rr, outcome_ts AS outcomeTs
-           FROM signals
-           WHERE outcome IN ('tp_hit', 'sl_hit') AND outcome_ts >= ?
-           ORDER BY outcome_ts ASC LIMIT 2000`,
+          `SELECT pattern, outcome, rr, outcomeTs FROM (
+             SELECT pattern, outcome, rr, outcome_ts AS outcomeTs
+             FROM signals
+             WHERE outcome IN ('tp_hit', 'sl_hit') AND outcome_ts >= ?
+             ORDER BY outcome_ts DESC LIMIT 2000
+           ) ORDER BY outcomeTs ASC`,
         ).bind(since),
       ]);
       return json({ days, patterns: aggs.results, closed: closed.results });

@@ -3,7 +3,7 @@ import {
   pairBySymbol, quoteFromCandles,
   type AISignal, type Quote, type SeriesData,
 } from './market';
-import { strategyIdForPattern, type StrategyStats } from './strategies';
+import { STRATEGY_DEFS, strategyIdForPattern, type StrategyStats } from './strategies';
 
 /* Capa de datos: todo sale del motor de Cloudflare (Twelve Data + D1).
    Si el par/TF está fuera del universo ingerido, la API cae o el histórico
@@ -91,6 +91,9 @@ export async function loadStrategyStats(): Promise<{
   try {
     const res = await api.strategies(30);
     const grossR = new Map<string, number>();
+
+    // con el motor respondiendo, una estrategia sin señales muestra 0, no «—»
+    for (const d of STRATEGY_DEFS) ensure(d.id);
 
     for (const p of res.patterns) {
       const id = strategyIdForPattern(p.pattern);
