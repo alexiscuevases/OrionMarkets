@@ -59,6 +59,8 @@ export interface ApiSignal {
   scoresJson: string | null;
   contextJson?: string | null;
   overallScore: number | null;
+  evalRevision?: number | null;
+  evalUpdatedAt?: number | null;
 }
 
 /** Estado de mercado por símbolo calculado por el motor sobre la serie 1h. */

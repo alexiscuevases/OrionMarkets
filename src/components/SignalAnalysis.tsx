@@ -57,6 +57,9 @@ export default function SignalAnalysis({ signal, onClose, onViewChart }: Props) 
           </span>
           <span className="analysis__sub num">
             {signal.symbol} · {signal.tf} · {fmtDateTime(signal.time)}
+            {(signal.evalRevision ?? 1) > 1 && signal.evalUpdatedAt != null && (
+              <> · re-evaluada {fmtDateTime(signal.evalUpdatedAt)} (rev {signal.evalRevision})</>
+            )}
           </span>
           <button className="analysis__close" aria-label="Cerrar" onClick={onClose}>✕</button>
         </header>
@@ -74,6 +77,16 @@ export default function SignalAnalysis({ signal, onClose, onViewChart }: Props) 
               </span>
             )}
           </div>
+
+          {signal.context?.tracking && (
+            <div className="analysis__tracking num">
+              Lleva {signal.context.tracking.barsSinceDetected} velas abierta · precio
+              actual {signal.context.tracking.currentPrice.toFixed(pair.decimals)} ·{' '}
+              {signal.context.tracking.progressToTargetPct >= 0
+                ? `ha recorrido el ${signal.context.tracking.progressToTargetPct}% hacia el objetivo`
+                : `retrocede un ${Math.abs(signal.context.tracking.progressToTargetPct)}% hacia el stop`}
+            </div>
+          )}
 
           {evaluated ? (
             <>

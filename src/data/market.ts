@@ -128,6 +128,13 @@ export interface SignalCtx {
   riskReward: number;
   recentOutcomes: { pattern: string; total: number; tpRate: number; avgRr: number }[];
   news: string | null;
+  /** Presente solo si el dossier es de una re-evaluación. */
+  tracking?: {
+    revision: number;
+    barsSinceDetected: number;
+    currentPrice: number;
+    progressToTargetPct: number;
+  } | null;
 }
 
 export interface AISignal {
@@ -154,6 +161,8 @@ export interface AISignal {
   aiConfidence?: number | null;
   rr?: number;
   context?: SignalCtx | null;      // dossier que vio la IA al evaluar
+  evalRevision?: number | null;    // nº de revisión (>1 = re-evaluada)
+  evalUpdatedAt?: number | null;   // última (re)evaluación
 }
 
 /* ---------------- Sesiones de mercado ---------------- */

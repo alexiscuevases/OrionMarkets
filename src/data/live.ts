@@ -266,5 +266,7 @@ function adaptSignal(s: ApiSignal, tfOverride?: string): AISignal {
     aiConfidence: s.aiConfidence,
     rr: s.rr,
     context,
+    evalRevision: s.evalRevision ?? null,
+    evalUpdatedAt: s.evalUpdatedAt ?? null,
   };
 }

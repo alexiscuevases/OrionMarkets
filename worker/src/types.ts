@@ -8,6 +8,7 @@ export interface Env {
   AI_MODEL: string;
   AI_MIN_CONFIDENCE: string;
   AI_MAX_PER_RUN: string;
+  AI_MAX_REEVAL: string;
 }
 
 /** Configuración del universo a ingerir. */
@@ -83,6 +84,18 @@ export interface SignalContext {
   similarCases: string | null;
   news: string | null;      // pendiente de proveedor de noticias
   sentiment: string | null; // pendiente de proveedor de sentimiento
+  /** Solo en re-evaluaciones: seguimiento de la señal desde su detección. */
+  tracking?: SignalTracking | null;
+}
+
+/** Seguimiento de una señal abierta al re-evaluarla con datos nuevos. */
+export interface SignalTracking {
+  revision: number;          // nº de esta revisión (2 = primera re-evaluación)
+  barsSinceDetected: number;
+  currentPrice: number;
+  /** % del recorrido entrada→objetivo ya hecho; negativo si va hacia el stop. */
+  progressToTargetPct: number;
+  previousVerdict: { action: string; confidence: number; thesis: string };
 }
 
 /** Lección destilada por la IA a partir de sus propios errores. */

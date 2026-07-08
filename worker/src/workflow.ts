@@ -6,8 +6,9 @@ import {
 } from 'cloudflare:workers';
 import {
   addLessons, getAiCalibration, getAiMistakes, getCursor, getLessons,
-  getOpenSignals, getUnevaluatedSignals, getUnindexedClosed, insertSignals,
-  loadCandles, markIndexed, setCursor, updateOutcomes, upsertCandles,
+  getOpenSignals, getReevaluableSignals, getUnevaluatedSignals,
+  getUnindexedClosed, insertSignals, loadCandles, markIndexed, setCursor,
+  updateOutcomes, upsertCandles,
 } from './db';
 import { fetchSeries } from './twelvedata';
 import { detectAll, profileFor, resolveOutcome } from './patterns';
@@ -38,7 +39,9 @@ export interface PipelineParams {
                    + resolución de resultados de señales abiertas (TP/SL)
    3. IA           dossier + gate por expectancia + memoria de casos
                    similares + lecciones aprendidas → Workers AI, solo
-                   señales con confianza determinista >= AI_MIN_CONFIDENCE
+                   señales con confianza determinista >= AI_MIN_CONFIDENCE;
+                   además re-evalúa señales abiertas cuya evaluación caducó
+                   con la llegada de velas nuevas (dossier al presente)
    4. SCORING      puntuación multidimensional 0-100 (ajuste IA calibrado
                    con su acierto real) → D1 + resumen en KV
    5. APRENDIZAJE  indexa cierres en Vectorize (memoria de casos) y
@@ -243,6 +246,120 @@ export class OrionPipeline extends WorkflowEntrypoint<Env, PipelineParams> {
       topScore = Math.max(topScore, overall);
     }
 
+    /* ---------- FASE 3c · Re-evaluación de señales abiertas ----------
+       Un veredicto emitido al detectar la señal caduca a medida que llegan
+       velas nuevas. Cada pasada re-analiza las evaluaciones más antiguas
+       con el dossier recalculado al presente (la señal sigue abierta, así
+       que aquí no hay look-ahead) y sobreescribe el veredicto con una
+       revisión nueva: la confianza puede subir, bajar o pasar a skip. */
+
+    const maxReeval = Number(this.env.AI_MAX_REEVAL) || 4;
+
+    const stale = await step.do('selecciona re-evaluaciones', async () => {
+      const now = Date.now();
+      return (await getReevaluableSignals(db, 32))
+        // caduca al cerrar una vela nueva de su intervalo; mínimo 15 min
+        // para que M5 no se re-evalúe en cada pasada del cron
+        .filter((c) => {
+          const bar = INTERVAL_MS[c.interval as Interval] ?? 3_600_000;
+          return now - c.evalTs >= Math.max(bar, 15 * 60_000);
+        })
+        .slice(0, maxReeval);
+    });
+
+    let reevaluated = 0;
+    for (const sig of stale) {
+      const dossier = await step.do(`re-dossier ${sig.sigKey}`, RETRY, async () => {
+        const candles = await loadCandles(db, sig.symbol, sig.interval, 3000);
+        const lastTs = candles.length > 0 ? candles[candles.length - 1].ts : sig.ts;
+        const ctx = await buildContext(db, sig, candles, lastTs);
+
+        // seguimiento desde la detección: la IA decide sabiendo dónde está
+        // el precio respecto a la entrada y qué dictaminó la vez anterior
+        const bar = INTERVAL_MS[sig.interval as Interval] ?? 3_600_000;
+        const price = candles.length > 0 ? candles[candles.length - 1].close : sig.entry;
+        const span = Math.abs(sig.target - sig.entry);
+        const signedMove = sig.direction === 'buy' ? price - sig.entry : sig.entry - price;
+        ctx.tracking = {
+          revision: sig.revision + 1,
+          barsSinceDetected: Math.max(0, Math.round((lastTs - sig.ts) / bar)),
+          currentPrice: price,
+          progressToTargetPct: span > 0 ? Math.round((signedMove / span) * 100) : 0,
+          previousVerdict: {
+            action: sig.aiAction,
+            confidence: sig.aiConfidence,
+            thesis: sig.aiThesis,
+          },
+        };
+        return ctx;
+      });
+
+      dossier.similarCases = await step.do(`re-similares ${sig.sigKey}`, async () => {
+        try {
+          const [vector] = await embedTexts(
+            this.env.AI, [caseText(featuresFromContext(dossier))],
+          );
+          const res = await this.env.VECTOR_INDEX.query(vector, {
+            topK: 8,
+            returnMetadata: 'all',
+          });
+          return summarizeSimilarCases(res.matches);
+        } catch {
+          return null;
+        }
+      });
+
+      const prior = { createdAt: sig.evalCreatedAt, revision: sig.revision };
+
+      // el gate por expectancia también se re-aplica: el historial del
+      // patrón puede haberse vuelto negativo desde la evaluación original
+      const hist = dossier.recentOutcomes.find((o) => o.pattern === sig.pattern);
+      const expectancy =
+        hist && hist.total >= 15
+          ? hist.tpRate * (hist.avgRr || sig.rr) - (1 - hist.tpRate)
+          : null;
+      if (expectancy !== null && expectancy <= 0) {
+        await step.do(`re-gate ${sig.sigKey}`, RETRY, async () =>
+          persistEvaluation(db, 'gate:historial', sig.sigKey, dossier, {
+            action: 'skip',
+            confidence: 0,
+            thesis: `Retirada en re-evaluación: "${sig.pattern}" acumula expectancia ${expectancy.toFixed(2)}R en ${hist!.total} cierres de ${sig.symbol} ${sig.interval}.`,
+            risks: 'Patrón con historial perdedor en este mercado.',
+            sentimentScore: 3,
+            newsScore: 3,
+          }, null, prior),
+        );
+        reevaluated++;
+        continue;
+      }
+
+      const lessons = knowledge.lessons
+        .filter((l) => l.scope === 'global' || l.scope === `${sig.symbol}|${sig.interval}`)
+        .map((l) => l.lesson)
+        .slice(0, 8);
+
+      // si la IA no responde se conserva el veredicto anterior: mejor una
+      // evaluación algo desfasada que sobrescribirla con un skip técnico
+      let verdict: AiVerdict;
+      try {
+        verdict = await step.do(`re-ia ${sig.sigKey}`, AI_RETRY, async () =>
+          evaluateSignal(this.env.AI, this.env.AI_MODEL, dossier, lessons),
+        );
+      } catch {
+        continue;
+      }
+
+      const overall = await step.do(`re-scoring ${sig.sigKey}`, RETRY, async () =>
+        persistEvaluation(
+          db, this.env.AI_MODEL, sig.sigKey, dossier, verdict,
+          calibrationFor(verdict.confidence, knowledge.calibration), prior,
+        ),
+      );
+
+      reevaluated++;
+      topScore = Math.max(topScore, overall);
+    }
+
     /* ---------- FASE 5 · Aprendizaje ---------- */
 
     // 5a. memoria de casos: embeber e indexar señales cerradas pendientes
@@ -345,6 +462,7 @@ export class OrionPipeline extends WorkflowEntrypoint<Env, PipelineParams> {
           ingested,
           newSignals,
           evaluated,
+          reevaluated,
           topScore,
           indexedCases,
           newLessons,
@@ -352,7 +470,7 @@ export class OrionPipeline extends WorkflowEntrypoint<Env, PipelineParams> {
       );
     });
 
-    return { ingested, newSignals, evaluated, topScore, indexedCases, newLessons };
+    return { ingested, newSignals, evaluated, reevaluated, topScore, indexedCases, newLessons };
   }
 }
 
@@ -363,14 +481,17 @@ async function persistEvaluation(
   dossier: SignalContext,
   verdict: AiVerdict,
   calib: CalibrationBucket | null = null,
+  /** En re-evaluaciones: conserva created_at original e incrementa la revisión. */
+  prior: { createdAt: number; revision: number } | null = null,
 ): Promise<number> {
   const { breakdown, overall } = scoreSignal(dossier, verdict, calib);
+  const now = Date.now();
   await db
     .prepare(
       `INSERT OR REPLACE INTO evaluations
        (sig_key, context_json, ai_action, ai_confidence, ai_thesis, ai_risks,
-        scores_json, overall_score, model, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        scores_json, overall_score, model, created_at, revision, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       sigKey,
@@ -382,7 +503,9 @@ async function persistEvaluation(
       JSON.stringify(breakdown),
       overall,
       model,
-      Date.now(),
+      prior?.createdAt ?? now,
+      prior ? prior.revision + 1 : 1,
+      now,
     )
     .run();
   return overall;

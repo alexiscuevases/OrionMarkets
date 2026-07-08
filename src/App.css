@@ -1085,6 +1085,13 @@
 }
 .analysis__signal b { font-weight: 600; }
 
+/* seguimiento en re-evaluaciones: dónde está el precio desde la detección */
+.analysis__tracking {
+  margin-top: -6px;
+  font-size: 10.5px;
+  color: var(--ink-low);
+}
+
 .analysis__stats {
   display: grid;
   grid-template-columns: repeat(4, 1fr);

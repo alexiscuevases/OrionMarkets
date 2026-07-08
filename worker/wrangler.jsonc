@@ -51,7 +51,9 @@
     // Confianza mínima (0-100) del patrón determinista para activar la IA
     "AI_MIN_CONFIDENCE": "65",
     // Máximo de señales evaluadas por IA en cada ejecución
-    "AI_MAX_PER_RUN": "8"
+    "AI_MAX_PER_RUN": "8",
+    // Máximo de señales abiertas re-evaluadas por IA en cada ejecución
+    "AI_MAX_REEVAL": "4"
   }
   // Secretos (no van aquí):
   //   wrangler secret put TWELVEDATA_API_KEY

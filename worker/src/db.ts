@@ -170,6 +170,41 @@ export async function getUnevaluatedSignals(
   return results;
 }
 
+/** Señal abierta candidata a re-evaluación, con el estado de su evaluación. */
+export interface ReevaluableSignal extends SignalRow {
+  evalTs: number;       // última evaluación (updated_at, o created_at si nunca se re-evaluó)
+  evalCreatedAt: number;
+  revision: number;
+  aiAction: string;
+  aiConfidence: number;
+  aiThesis: string;
+}
+
+/** Señales abiertas ya evaluadas por la IA, las de evaluación más antigua
+    primero. Excluye los descartes automáticos del gate (son decisiones por
+    datos duros, no juicios de la IA que caduquen con el mercado). */
+export async function getReevaluableSignals(
+  db: D1Database,
+  limit: number,
+): Promise<ReevaluableSignal[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT s.sig_key AS sigKey, s.symbol, s.interval, s.ts, s.pattern, s.direction,
+              s.entry, s.stop, s.target, s.rr, s.confidence, s.outcome, s.outcome_ts AS outcomeTs,
+              COALESCE(e.updated_at, e.created_at) AS evalTs,
+              e.created_at AS evalCreatedAt, e.revision,
+              e.ai_action AS aiAction, e.ai_confidence AS aiConfidence, e.ai_thesis AS aiThesis
+       FROM signals s
+       JOIN evaluations e ON e.sig_key = s.sig_key
+       WHERE s.outcome = 'open' AND e.model NOT LIKE 'gate:%'
+       ORDER BY evalTs ASC
+       LIMIT ?`,
+    )
+    .bind(limit)
+    .all<ReevaluableSignal>();
+  return results;
+}
+
 /** Rendimiento histórico por patrón (dossier IA, gate y scoring).
     avgRr permite calcular expectancia: tpRate·avgRr − (1 − tpRate). */
 export async function getPatternStats(

@@ -93,7 +93,8 @@ export default {
                e.ai_action AS aiAction, e.ai_confidence AS aiConfidence,
                e.ai_thesis AS aiThesis, e.ai_risks AS aiRisks,
                e.scores_json AS scoresJson, e.context_json AS contextJson,
-               e.overall_score AS overallScore
+               e.overall_score AS overallScore,
+               e.revision AS evalRevision, COALESCE(e.updated_at, e.created_at) AS evalUpdatedAt
         FROM signals s LEFT JOIN evaluations e ON e.sig_key = s.sig_key`;
       const binds: unknown[] = [];
       if (validSymbol(symbol) && validInterval(interval)) {
@@ -146,7 +147,8 @@ export default {
                   e.ai_action AS aiAction, e.ai_confidence AS aiConfidence,
                   e.ai_thesis AS aiThesis, e.ai_risks AS aiRisks,
                   e.scores_json AS scoresJson, e.context_json AS contextJson,
-                  e.overall_score AS overallScore
+                  e.overall_score AS overallScore,
+                  e.revision AS evalRevision, COALESCE(e.updated_at, e.created_at) AS evalUpdatedAt
            FROM evaluations e JOIN signals s ON s.sig_key = e.sig_key
            WHERE e.ai_action != 'skip' AND s.outcome = 'open'
            ORDER BY e.overall_score DESC, s.ts DESC LIMIT ?`,

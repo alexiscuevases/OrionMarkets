@@ -33,6 +33,20 @@ Criterios:
   al menos dos factores más (RSI, volumen, distancia a extremos) la apoyen.
 - Sé conservador: ante la duda, "skip" con confianza baja.`;
 
+/** Bloque adicional cuando la señal ya está abierta y se re-evalúa. */
+function reevalBlock(context: SignalContext): string {
+  if (!context.tracking) return '';
+  return `
+
+Esto es una RE-EVALUACIÓN: la señal sigue abierta y el dossier está
+recalculado con los datos más recientes. El campo "tracking" incluye cuántas
+velas lleva abierta, el precio actual, el % de recorrido hacia el objetivo
+(negativo si avanza hacia el stop) y tu veredicto anterior. Decide con el
+contexto ACTUAL: confirma el veredicto, ajusta la confianza, o usa "skip" si
+las condiciones que justificaban la entrada ya no se dan. No mantengas el
+veredicto anterior por inercia ni lo cambies sin motivo en los datos.`;
+}
+
 /** Bloque adicional del system prompt con las lecciones aprendidas. */
 function lessonsBlock(lessons: string[]): string {
   if (lessons.length === 0) return '';
@@ -51,7 +65,7 @@ export async function evaluateSignal(
 ): Promise<AiVerdict> {
   const result = (await ai.run(model as Parameters<Ai['run']>[0], {
     messages: [
-      { role: 'system', content: SYSTEM_PROMPT + lessonsBlock(lessons) },
+      { role: 'system', content: SYSTEM_PROMPT + reevalBlock(context) + lessonsBlock(lessons) },
       { role: 'user', content: JSON.stringify(context, null, 2) },
     ],
     temperature: 0.2,

@@ -11,9 +11,11 @@ export async function buildContext(
   db: D1Database,
   signal: SignalRow,
   candles: Candle[],
+  asOf: number = signal.ts,
 ): Promise<SignalContext> {
-  // solo información disponible en el momento de la señal (sin look-ahead)
-  const upto = candles.filter((c) => c.ts <= signal.ts);
+  // solo información disponible hasta el corte: en la evaluación inicial es
+  // el momento de la señal (sin look-ahead); en re-evaluaciones, el presente
+  const upto = candles.filter((c) => c.ts <= asOf);
   if (upto.length === 0) upto.push(...candles.slice(0, 1));
   const closes = upto.map((c) => c.close);
 
@@ -27,10 +29,10 @@ export async function buildContext(
   const e200Slope = slopePct(ema200, last, 40);
 
   // tendencia de marco superior: pendiente de EMA50 sobre la serie 1h.
-  // Se corta en signal.ts: usar velas posteriores era look-ahead y sesgaba
-  // la validación IA de señales pasadas
+  // Se corta en asOf: usar velas posteriores al corte era look-ahead y
+  // sesgaba la validación IA de señales pasadas
   const higherTf = (await loadCandles(db, signal.symbol, '1h', 400))
-    .filter((c) => c.ts <= signal.ts);
+    .filter((c) => c.ts <= asOf);
   const hCloses = higherTf.map((c) => c.close);
   const hEma50 = ema(hCloses, 50);
   const hSlope = slopePct(hEma50, hCloses.length - 1, 30);
@@ -54,7 +56,7 @@ export async function buildContext(
   for (const other of SYMBOLS) {
     if (other === signal.symbol) continue;
     const oc = (await loadCandles(db, other, '1h', 200))
-      .filter((c) => c.ts <= signal.ts);
+      .filter((c) => c.ts <= asOf);
     const r = correlation(baseRet, returns(oc.map((c) => c.close)));
     correlations[other] = Math.round(r * 100) / 100;
   }
