@@ -1,6 +1,23 @@
 import { atr, correlation, ema, returns, rsi, slopePct } from './indicators';
 import { getPatternStats, loadCandles } from './db';
+import { smcSummary } from './smc';
 import { SYMBOLS, type Candle, type SignalContext, type SignalRow } from './types';
+
+/* Sesiones de mercado (horas UTC); espejo de SESSIONS del frontend. */
+const SESSIONS: { name: string; openUtc: number; closeUtc: number }[] = [
+  { name: 'Sídney', openUtc: 21, closeUtc: 6 },
+  { name: 'Tokio', openUtc: 0, closeUtc: 9 },
+  { name: 'Londres', openUtc: 7, closeUtc: 16 },
+  { name: 'Nueva York', openUtc: 12, closeUtc: 21 },
+];
+
+function openSessions(ts: number): string {
+  const h = new Date(ts).getUTCHours();
+  const open = SESSIONS.filter((s) =>
+    s.openUtc < s.closeUtc ? h >= s.openUtc && h < s.closeUtc : h >= s.openUtc || h < s.closeUtc,
+  ).map((s) => s.name);
+  return open.length > 0 ? open.join(' + ') : 'fuera de horario';
+}
 
 /* Paso 3a — dossier determinista de una señal.
    Equivale al bloque "Contexto / Noticias / Correlación" del diseño:
@@ -89,6 +106,8 @@ export async function buildContext(
     similarCases: null, // lo rellena el workflow con la memoria vectorial
     news: null,
     sentiment: null,
+    session: openSessions(asOf),
+    smc: smcSummary(upto, signal.direction),
   };
 }
 

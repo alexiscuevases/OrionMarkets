@@ -6,6 +6,7 @@ import { detectAll, profileFor, resolveOutcome } from '../src/patterns.ts';
 import { parseVerdict } from '../src/ai.ts';
 import { calibrationFor, scoreSignal } from '../src/scoring.ts';
 import { caseText, featuresFromContext, summarizeSimilarCases } from '../src/learn.ts';
+import { smcSummary } from '../src/smc.ts';
 import type { Candle, SignalContext } from '../src/types.ts';
 
 let failures = 0;
@@ -148,6 +149,67 @@ const summary = summarizeSimilarCases([
 ]);
 check('resumen de similares con acierto y errores IA',
   summary !== null && summary.includes('33%') && summary.includes('2'), `(${summary})`);
+
+console.log('7. smart money');
+// serie artesanal: caída, order block de demanda + impulso, máximos iguales
+const smcCandles: Candle[] = [];
+{
+  let p = 1.08;
+  let t = Date.parse('2026-03-01T00:00:00Z');
+  const add = (o: number, h: number, l: number, c: number) => {
+    smcCandles.push({ ts: t, open: o, high: h, low: l, close: c, volume: 1000 });
+    t += 3_600_000;
+  };
+  // bajada suave hasta ~1.0700
+  for (let k = 0; k < 100; k++) {
+    const c = p - 0.0001 + Math.sin(k * 1.7) * 0.0002;
+    add(p, Math.max(p, c) + 0.0004, Math.min(p, c) - 0.0004, c);
+    p = c;
+  }
+  // vela bajista origen (low 1.0690) + impulso alcista de 3 velas
+  add(p, p + 0.0003, 1.069, 1.0694); p = 1.0694;
+  for (const c of [1.0715, 1.0738, 1.076]) { add(p, c + 0.0005, p - 0.0003, c); p = c; }
+  // rango tranquilo con tres máximos iguales ~1.0790 (liquidez buy-side)
+  for (let k = 0; k < 76; k++) {
+    const peak = k === 18 ? 1.0788 : k === 38 ? 1.079 : k === 58 ? 1.0789 : 0;
+    const c = 1.0762 + Math.sin(k * 1.7) * 0.0004;
+    add(p, peak || Math.max(p, c) + 0.0004, Math.min(p, c) - 0.0004, c);
+    p = c;
+  }
+}
+const smc = smcSummary(smcCandles, 'buy');
+check('detecta zona de demanda sin mitigar', smc?.demandZone != null,
+  JSON.stringify(smc?.demandZone));
+check('detecta liquidez buy-side (máximos iguales)',
+  smc?.buySideLiquidity != null && smc.buySideLiquidity.touches >= 2 &&
+  Math.abs(smc.buySideLiquidity.price - 1.079) < 1e-9,
+  JSON.stringify(smc?.buySideLiquidity));
+check('estructura apoya la compra', smc?.structuralBias === 'apoya', `(${smc?.structuralBias})`);
+
+const smcFor = scoreSignal({
+  ...ctx,
+  smc: {
+    demandZone: { low: 1.075, high: 1.0785, distancePct: 0.1 },
+    supplyZone: null,
+    buySideLiquidity: { price: 1.09, touches: 3, distancePct: 0.6 },
+    sellSideLiquidity: null,
+    structuralBias: 'apoya',
+  },
+}, good);
+const smcAgainst = scoreSignal({
+  ...ctx,
+  smc: {
+    demandZone: null,
+    supplyZone: { low: 1.081, high: 1.082, distancePct: 0.09 },
+    buySideLiquidity: null,
+    sellSideLiquidity: { price: 1.07, touches: 2, distancePct: 0.9 },
+    structuralBias: 'en contra',
+  },
+}, good);
+check('SMC a favor con imán → institucional 5', smcFor.breakdown.institutional === 5);
+check('SMC en contra penaliza el score',
+  smcAgainst.breakdown.institutional === 1 && smcAgainst.overall < smcFor.overall,
+  `(${smcAgainst.overall} < ${smcFor.overall})`);
 
 console.log(failures === 0 ? '\nTODO OK' : `\n${failures} FALLOS`);
 process.exit(failures === 0 ? 0 : 1);

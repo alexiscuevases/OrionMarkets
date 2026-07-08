@@ -147,6 +147,43 @@ export function buildAnalysis(s: AISignal): SignalAnalysis {
       }
     }
 
+    // Estructura Smart Money (order blocks + liquidez) si el dossier la trae
+    if (ctx.smc) {
+      const s = ctx.smc;
+      const backing = buy ? s.demandZone : s.supplyZone;
+      const ceiling = buy ? s.supplyZone : s.demandZone;
+      const magnet = buy ? s.buySideLiquidity : s.sellSideLiquidity;
+
+      if (backing && backing.distancePct <= 0.5) {
+        positives.push({
+          text: `Zona institucional de ${buy ? 'demanda' : 'oferta'} a ${backing.distancePct}% respalda la entrada`,
+        });
+      }
+      if (magnet) {
+        positives.push({
+          text: `Liquidez sin barrer (${magnet.touches} toques) a ${magnet.distancePct}%: imán en la dirección`,
+        });
+      }
+      if (ceiling && ceiling.distancePct <= 0.3) {
+        negatives.push({
+          text: `Zona institucional de ${buy ? 'oferta' : 'demanda'} a ${ceiling.distancePct}% por delante: posible freno`,
+        });
+        riskPts += 1;
+      } else if (s.structuralBias === 'en contra') {
+        negatives.push({ text: 'Estructura institucional en contra de la operación' });
+        riskPts += 1;
+      }
+    }
+
+    // Sesión de mercado en el momento del dossier
+    if (ctx.session) {
+      if (ctx.session.includes('Londres') || ctx.session.includes('Nueva York')) {
+        positives.push({ text: `Sesión con volumen (${ctx.session})` });
+      } else {
+        negatives.push({ text: `Sesión de poco volumen (${ctx.session})` });
+      }
+    }
+
     // Noticias (null hasta conectar proveedor)
     if (ctx.news) negatives.push({ text: `Noticias próximas: ${ctx.news}` });
   }

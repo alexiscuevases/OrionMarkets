@@ -76,9 +76,22 @@ export function scoreSignal(
   const news = clamp5(ai.newsScore);
   const sentiment = clamp5(ai.sentimentScore);
 
-  // Institucional: proxy — distancia a extremos recientes (espacio para correr)
-  const room = ctx.direction === 'buy' ? ctx.distanceToRecentHigh : ctx.distanceToRecentLow;
-  const institutional = clamp5(room > 0.6 ? 4 : room > 0.3 ? 3 : 2);
+  // Institucional: estructura Smart Money real (order blocks + liquidez).
+  // 'apoya' con liquidez-imán por delante → 5; sin estructura calculable se
+  // cae al proxy antiguo (distancia a extremos recientes)
+  let institutional: number;
+  if (ctx.smc) {
+    const magnet =
+      ctx.direction === 'buy' ? ctx.smc.buySideLiquidity : ctx.smc.sellSideLiquidity;
+    institutional = clamp5(
+      ctx.smc.structuralBias === 'apoya' ? (magnet ? 5 : 4)
+      : ctx.smc.structuralBias === 'neutral' ? 3
+      : 1,
+    );
+  } else {
+    const room = ctx.direction === 'buy' ? ctx.distanceToRecentHigh : ctx.distanceToRecentLow;
+    institutional = clamp5(room > 0.6 ? 4 : room > 0.3 ? 3 : 2);
+  }
 
   // Risk/Reward
   const riskReward = clamp5(

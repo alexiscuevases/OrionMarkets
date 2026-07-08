@@ -31,6 +31,14 @@ Criterios:
   similares exige "skip" o confianza claramente reducida.
 - Desconfía de señales contra la tendencia del marco superior: exige que
   al menos dos factores más (RSI, volumen, distancia a extremos) la apoyen.
+- El bloque "smc" resume la estructura institucional: zonas de órdenes sin
+  mitigar (demand/supply) y liquidez sin barrer (máximos/mínimos iguales).
+  structuralBias "en contra" significa techo/suelo institucional inmediato:
+  exige confluencia excepcional o usa "skip". La liquidez por delante en la
+  dirección de la señal actúa como imán del precio y refuerza la entrada.
+- "session" indica las sesiones abiertas: Londres y Nueva York concentran
+  el volumen; en Sídney/Tokio en solitario los patrones de ruptura pierden
+  fiabilidad y merece más prudencia.
 - Sé conservador: ante la duda, "skip" con confianza baja.`;
 
 /** Bloque adicional cuando la señal ya está abierta y se re-evalúa. */

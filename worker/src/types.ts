@@ -84,6 +84,10 @@ export interface SignalContext {
   similarCases: string | null;
   news: string | null;      // pendiente de proveedor de noticias
   sentiment: string | null; // pendiente de proveedor de sentimiento
+  /** Sesiones de mercado abiertas en el momento del corte del dossier. */
+  session?: string;
+  /** Estructura Smart Money (order blocks y liquidez); null sin muestra. */
+  smc?: import('./smc').SmcSummary | null;
   /** Solo en re-evaluaciones: seguimiento de la señal desde su detección. */
   tracking?: SignalTracking | null;
 }
