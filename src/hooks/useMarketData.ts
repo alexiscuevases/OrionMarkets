@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
+import type { ApiMarketState } from '../api/client';
 import {
-  isLiveCapable, loadEngineStatus, loadMarketData, loadOpportunities,
-  loadStrategyStats, type EngineStatus, type MarketData,
+  isLiveCapable, loadEngineStatus, loadMarketData, loadMarketStates,
+  loadOpportunities, loadStrategyStats, type EngineStatus, type MarketData,
 } from '../data/live';
 import type { AISignal } from '../data/market';
 import {
@@ -112,6 +113,27 @@ export function useOpportunities(): { signals: AISignal[]; live: boolean } {
   }, []);
 
   return state;
+}
+
+/** Estado de mercado del símbolo en pantalla (tendencia, volatilidad…). */
+export function useMarketState(symbol: string): ApiMarketState | null {
+  const [states, setStates] = useState<Map<string, ApiMarketState> | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    const refresh = () =>
+      loadMarketStates().then((r) => {
+        if (alive && r) setStates(r);
+      });
+    refresh();
+    const id = setInterval(refresh, REFRESH_MS);
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
+  }, []);
+
+  return states?.get(symbol) ?? null;
 }
 
 /** Estado del motor para la barra superior. */

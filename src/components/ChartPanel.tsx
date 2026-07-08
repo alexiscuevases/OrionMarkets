@@ -5,6 +5,7 @@ import {
   type AISignal, type SeriesData,
 } from '../data/market';
 import { isLiveCapable } from '../data/live';
+import MarketContextBar from './MarketContextBar';
 import {
   AreaIcon, CandlesIcon, LayersIcon, LineIcon, OhlcIcon, SparkleIcon, TargetIcon,
 } from './icons';
@@ -190,6 +191,8 @@ export default function ChartPanel({
           </button>
         </div>
       </div>
+
+      <MarketContextBar symbol={symbol} />
 
       <div className="chart-toolbar">
         <div className="seg">

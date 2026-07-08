@@ -57,7 +57,30 @@ export interface ApiSignal {
   aiThesis: string | null;
   aiRisks?: string | null;
   scoresJson: string | null;
+  contextJson?: string | null;
   overallScore: number | null;
+}
+
+/** Estado de mercado por símbolo calculado por el motor sobre la serie 1h. */
+export interface ApiMarketState {
+  symbol: string;
+  trend: 'alcista' | 'bajista' | 'lateral';
+  trendStrength: 'fuerte' | 'moderada' | 'débil' | null;
+  volatility: 'muy baja' | 'baja' | 'media' | 'alta' | 'muy alta';
+  atrPct: number;
+  rsi14: number;
+  aboveEma200: boolean | null;
+  lastCandleTs: number;
+  news: string | null;
+}
+
+/** Calibración empírica de la confianza IA por tramo (acierto real). */
+export interface ApiCalibrationBucket {
+  bucket: 'lt50' | '50-64' | '65-79' | '80plus';
+  n: number;
+  tpRate: number;
+  avgRr: number;
+  expectancy: number;
 }
 
 /** Agregado de rendimiento por patrón (ventana de N días). */
@@ -102,4 +125,9 @@ export const api = {
     get<{ opportunities: ApiSignal[] }>(`/api/opportunities?limit=${limit}`),
 
   strategies: (days = 30) => get<ApiStrategies>(`/api/strategies?days=${days}`),
+
+  marketState: () =>
+    get<{ states: ApiMarketState[]; generatedAt: number }>('/api/market-state'),
+
+  learning: () => get<{ calibration: ApiCalibrationBucket[] }>('/api/learning'),
 };

@@ -1,7 +1,9 @@
-import { api, type ApiSignal } from '../api/client';
+import {
+  api, type ApiCalibrationBucket, type ApiMarketState, type ApiSignal,
+} from '../api/client';
 import {
   pairBySymbol, quoteFromCandles,
-  type AISignal, type Quote, type SeriesData,
+  type AISignal, type Quote, type SeriesData, type SignalCtx,
 } from './market';
 import { STRATEGY_DEFS, strategyIdForPattern, type StrategyStats } from './strategies';
 
@@ -144,6 +146,31 @@ export async function loadLiveQuote(symbol: string): Promise<Quote | null> {
   }
 }
 
+/** Estado de mercado por símbolo (tendencia, volatilidad…); null si el motor no responde. */
+export async function loadMarketStates(): Promise<Map<string, ApiMarketState> | null> {
+  try {
+    const res = await api.marketState();
+    return new Map(res.states.map((s) => [s.symbol, s]));
+  } catch {
+    return null;
+  }
+}
+
+/* Calibración empírica de la IA, cacheada en módulo: cambia despacio y
+   la consultan los modales de análisis cada vez que se abren. */
+let calibCache: { at: number; buckets: ApiCalibrationBucket[] } | null = null;
+
+export async function loadCalibration(): Promise<ApiCalibrationBucket[]> {
+  if (calibCache && Date.now() - calibCache.at < 5 * 60_000) return calibCache.buckets;
+  try {
+    const res = await api.learning();
+    calibCache = { at: Date.now(), buckets: res.calibration };
+    return res.calibration;
+  } catch {
+    return calibCache?.buckets ?? [];
+  }
+}
+
 export type EngineStatus = 'online' | 'offline';
 
 export async function loadEngineStatus(): Promise<{
@@ -200,6 +227,15 @@ function adaptSignal(s: ApiSignal, tfOverride?: string): AISignal {
     }
   }
 
+  let context: SignalCtx | null = null;
+  if (s.contextJson) {
+    try {
+      context = JSON.parse(s.contextJson) as SignalCtx;
+    } catch {
+      context = null;
+    }
+  }
+
   return {
     id: s.sigKey,
     symbol: s.symbol,
@@ -224,5 +260,10 @@ function adaptSignal(s: ApiSignal, tfOverride?: string): AISignal {
     overallScore: s.overallScore,
     scores,
     aiThesis: s.aiThesis,
+    aiRisks: s.aiRisks ?? null,
+    aiAction: s.aiAction,
+    aiConfidence: s.aiConfidence,
+    rr: s.rr,
+    context,
   };
 }

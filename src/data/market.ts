@@ -115,6 +115,21 @@ export function quoteFromCandles(
 
 export type Direction = 'buy' | 'sell';
 
+/** Dossier determinista con el que la IA evaluó la señal (context_json del motor). */
+export interface SignalCtx {
+  trendHigherTf: 'alcista' | 'bajista' | 'lateral';
+  ema200: 'precio por encima' | 'precio por debajo';
+  ema200Slope: 'ascendente' | 'descendente' | 'plana';
+  rsi14: number;
+  atrPct: number;
+  volumeTrend: 'creciente' | 'decreciente' | 'estable';
+  distanceToRecentHigh: number;
+  distanceToRecentLow: number;
+  riskReward: number;
+  recentOutcomes: { pattern: string; total: number; tpRate: number; avgRr: number }[];
+  news: string | null;
+}
+
 export interface AISignal {
   id: string;
   symbol: string;
@@ -134,6 +149,11 @@ export interface AISignal {
   overallScore?: number | null;    // 0-100 del sistema de scoring
   scores?: Record<string, number> | null; // desglose 0-5 por dimensión
   aiThesis?: string | null;
+  aiRisks?: string | null;
+  aiAction?: 'buy' | 'sell' | 'skip' | null;
+  aiConfidence?: number | null;
+  rr?: number;
+  context?: SignalCtx | null;      // dossier que vio la IA al evaluar
 }
 
 /* ---------------- Sesiones de mercado ---------------- */

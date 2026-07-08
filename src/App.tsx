@@ -4,6 +4,7 @@ import Watchlist from './components/Watchlist';
 import ChartPanel from './components/ChartPanel';
 import SidePanel from './components/SidePanel';
 import BottomPanel from './components/BottomPanel';
+import SignalAnalysis from './components/SignalAnalysis';
 import { useMarketData, useOpportunities, useStrategies } from './hooks/useMarketData';
 import { isSignalEnabled, strategyIdForPattern } from './data/strategies';
 import type { AISignal } from './data/market';
@@ -13,6 +14,8 @@ export default function App() {
   const [symbol, setSymbol] = useState('EURUSD');
   const [tf, setTf] = useState('H1');
   const [activeSignal, setActiveSignal] = useState<AISignal | null>(null);
+  // señal cuyo análisis IA se está viendo en el modal
+  const [analysisSignal, setAnalysisSignal] = useState<AISignal | null>(null);
 
   // catálogo de estrategias (una por detector del motor) con stats reales;
   // el interruptor de cada una decide qué señales se muestran en la UI
@@ -89,6 +92,7 @@ export default function App() {
         <BottomPanel
           signals={openSignals}
           onView={viewSignal}
+          onAnalyze={setAnalysisSignal}
           emptyMessage={
             noneActive
               ? 'No hay estrategias activas: actívalas en el panel lateral'
@@ -96,6 +100,16 @@ export default function App() {
           }
         />
       </main>
+      {analysisSignal && (
+        <SignalAnalysis
+          signal={analysisSignal}
+          onClose={() => setAnalysisSignal(null)}
+          onViewChart={(s) => {
+            viewSignal(s);
+            setAnalysisSignal(null);
+          }}
+        />
+      )}
     </div>
   );
 }

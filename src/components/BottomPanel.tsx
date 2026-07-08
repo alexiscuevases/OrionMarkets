@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { gradeForScore } from '../data/analysis';
 import {
   fmtDateTime, pairBySymbol, type AISignal,
 } from '../data/market';
@@ -6,13 +7,14 @@ import {
 interface Props {
   signals: AISignal[];
   onView: (signal: AISignal) => void;
+  onAnalyze: (signal: AISignal) => void;
   /** Texto del estado vacío cuando hay un motivo concreto (p. ej. sin estrategias activas). */
   emptyMessage?: string;
 }
 
 const TABS = ['Oportunidades detectadas', 'Posiciones', 'Historial', 'Alertas'] as const;
 
-export default function BottomPanel({ signals, onView, emptyMessage }: Props) {
+export default function BottomPanel({ signals, onView, onAnalyze, emptyMessage }: Props) {
   const [tab, setTab] = useState<(typeof TABS)[number]>(TABS[0]);
 
   return (
@@ -86,7 +88,14 @@ export default function BottomPanel({ signals, onView, emptyMessage }: Props) {
                     </td>
                     <td className="ta-r">
                       {s.overallScore != null ? (
-                        <span className="chip chip--score num">{s.overallScore}</span>
+                        <button
+                          className="chip chip--score chip--btn num"
+                          title="Ver análisis de la IA"
+                          onClick={() => onAnalyze(s)}
+                        >
+                          {s.overallScore}
+                          <em>{gradeForScore(s.overallScore)}</em>
+                        </button>
                       ) : (
                         <span className="dim">—</span>
                       )}
@@ -113,9 +122,23 @@ export default function BottomPanel({ signals, onView, emptyMessage }: Props) {
                       </span>
                     </td>
                     <td>
-                      <button className="link-btn" onClick={() => onView(s)}>
-                        Ver
-                      </button>
+                      <span className="row-actions">
+                        <button
+                          className="link-btn link-btn--ai"
+                          disabled={s.overallScore == null && s.context == null}
+                          title={
+                            s.overallScore == null && s.context == null
+                              ? 'Pendiente de evaluación IA'
+                              : '¿Por qué esta señal?'
+                          }
+                          onClick={() => onAnalyze(s)}
+                        >
+                          Análisis
+                        </button>
+                        <button className="link-btn" onClick={() => onView(s)}>
+                          Ver
+                        </button>
+                      </span>
                     </td>
                   </tr>
                 );

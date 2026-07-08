@@ -1,4 +1,5 @@
-import { getAiCalibration, getLessons, getMemoryProgress } from './db';
+import { getAiCalibration, getLessons, getMemoryProgress, loadCandles } from './db';
+import { atr, ema, rsi, slopePct } from './indicators';
 import { INTERVALS, SYMBOLS, type Env, type Interval } from './types';
 export { OrionPipeline } from './workflow';
 
@@ -90,7 +91,8 @@ export default {
         SELECT s.sig_key AS sigKey, s.symbol, s.interval, s.ts, s.pattern, s.direction,
                s.entry, s.stop, s.target, s.rr, s.confidence, s.outcome, s.outcome_ts AS outcomeTs,
                e.ai_action AS aiAction, e.ai_confidence AS aiConfidence,
-               e.ai_thesis AS aiThesis, e.scores_json AS scoresJson,
+               e.ai_thesis AS aiThesis, e.ai_risks AS aiRisks,
+               e.scores_json AS scoresJson, e.context_json AS contextJson,
                e.overall_score AS overallScore
         FROM signals s LEFT JOIN evaluations e ON e.sig_key = s.sig_key`;
       const binds: unknown[] = [];
@@ -143,7 +145,8 @@ export default {
                   s.entry, s.stop, s.target, s.rr, s.confidence, s.outcome,
                   e.ai_action AS aiAction, e.ai_confidence AS aiConfidence,
                   e.ai_thesis AS aiThesis, e.ai_risks AS aiRisks,
-                  e.scores_json AS scoresJson, e.overall_score AS overallScore
+                  e.scores_json AS scoresJson, e.context_json AS contextJson,
+                  e.overall_score AS overallScore
            FROM evaluations e JOIN signals s ON s.sig_key = e.sig_key
            WHERE e.ai_action != 'skip' AND s.outcome = 'open'
            ORDER BY e.overall_score DESC, s.ts DESC LIMIT ?`,
@@ -151,6 +154,55 @@ export default {
         .bind(limit)
         .all();
       return json({ opportunities: results });
+    }
+
+    /* --- estado de mercado por símbolo (tendencia, volatilidad, RSI) ---
+       calculado sobre la serie 1h y cacheado en KV; noticias queda null
+       hasta conectar un proveedor (la UI muestra «Ninguna») */
+    if (pathname === '/api/market-state') {
+      const cached = await env.CACHE.get('market:state', 'json');
+      if (cached) return json(cached);
+
+      const states = [];
+      for (const symbol of SYMBOLS) {
+        const candles = await loadCandles(env.DB, symbol, '1h', 400);
+        if (candles.length < 60) continue;
+        const closes = candles.map((c) => c.close);
+        const last = closes.length - 1;
+        const price = closes[last];
+
+        // misma lógica que el dossier de señales: pendiente de EMA50 en 1h
+        const e50 = ema(closes, 50);
+        const slope = slopePct(e50, last, 30);
+        const trend = slope > 0.01 ? 'alcista' : slope < -0.01 ? 'bajista' : 'lateral';
+        const mag = Math.abs(slope);
+        const trendStrength =
+          trend === 'lateral' ? null : mag >= 0.035 ? 'fuerte' : mag >= 0.018 ? 'moderada' : 'débil';
+
+        const e200 = ema(closes, 200);
+        const atrPct = Math.round(((atr(candles, 14)[last] ?? 0) / price) * 10000) / 100;
+        const volatility =
+          atrPct < 0.06 ? 'muy baja'
+          : atrPct < 0.12 ? 'baja'
+          : atrPct < 0.25 ? 'media'
+          : atrPct < 0.4 ? 'alta' : 'muy alta';
+
+        states.push({
+          symbol,
+          trend,
+          trendStrength,
+          volatility,
+          atrPct,
+          rsi14: Math.round(rsi(closes, 14)[last] ?? 50),
+          aboveEma200: Number.isFinite(e200[last]) ? price > e200[last] : null,
+          lastCandleTs: candles[candles.length - 1].ts,
+          news: null,
+        });
+      }
+
+      const payload = { states, generatedAt: Date.now() };
+      await env.CACHE.put('market:state', JSON.stringify(payload), { expirationTtl: 300 });
+      return json(payload);
     }
 
     /* --- estado del aprendizaje: lecciones, calibración y memoria --- */
