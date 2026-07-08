@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import Highcharts, { ORION, applyOrionTheme } from '../charts/orionTheme';
+import { computeSmc, drawSmc } from '../charts/smc';
 import {
   pairBySymbol, fmtDateTime,
   type AISignal, type SeriesData,
@@ -21,6 +22,7 @@ interface Props {
   tf: string;
   kind: ChartKind;
   showSignals: boolean;
+  showSmc: boolean;
   indicators: Indicators;
   activeSignal: AISignal | null;
   series: SeriesData;
@@ -28,7 +30,7 @@ interface Props {
 }
 
 export default function MainChart({
-  symbol, tf, kind, showSignals, indicators, activeSignal, series, signals,
+  symbol, tf, kind, showSignals, showSmc, indicators, activeSignal, series, signals,
 }: Props) {
   const { ema20, ema50, rsi14 } = indicators;
   const ref = useRef<HTMLDivElement>(null);
@@ -58,6 +60,16 @@ export default function MainChart({
 
     // en modo foco solo se dibuja la señal activa; el resto ensucia la lectura
     const visibleSignals = activeSignal ? [activeSignal] : signals;
+
+    // capa Smart Money: zonas institucionales, liquidez y movimiento
+    // probable; con señal en foco la proyección hereda su dirección
+    const smc = showSmc
+      ? computeSmc(
+          candles,
+          pair.pip,
+          activeSignal && activeSignal.outcome === 'open' ? activeSignal.direction : null,
+        )
+      : null;
 
     const outcomeLabel = (s: AISignal): string => {
       const pips =
@@ -284,7 +296,15 @@ export default function MainChart({
     }
 
     const chart = Highcharts.stockChart(ref.current, {
-      chart: { backgroundColor: 'transparent' },
+      chart: {
+        backgroundColor: 'transparent',
+        events: {
+          // la capa SMC se redibuja en cada render (zoom, pan, reflow)
+          render() {
+            drawSmc(this, smc, stepMs);
+          },
+        },
+      },
       // overscroll deja aire a la derecha de la última vela, estilo TradingView
       xAxis: { gridLineWidth: 1, range: stepMs * 110, overscroll: stepMs * 6 },
       yAxis: yAxes,
@@ -339,7 +359,7 @@ export default function MainChart({
       chart.destroy();
       chartRef.current = null;
     };
-  }, [symbol, tf, kind, showSignals, ema20, ema50, rsi14, activeSignal, series, signals]);
+  }, [symbol, tf, kind, showSignals, showSmc, ema20, ema50, rsi14, activeSignal, series, signals]);
 
   // el gráfico debe seguir el tamaño de su contenedor
   useEffect(() => {

@@ -87,6 +87,15 @@ export const BellIcon = ({ size, ...p }: P) => (
   </svg>
 );
 
+/** Capa Smart Money: bloques de órdenes apilados. */
+export const BlocksIcon = ({ size, ...p }: P) => (
+  <svg {...base(size)} {...p}>
+    <rect x="2" y="3" width="8.5" height="3.6" rx="1" />
+    <rect x="5.5" y="9.4" width="8.5" height="3.6" rx="1" />
+    <path d="M12.5 4.8H14M2 11.2h1.5" />
+  </svg>
+);
+
 export const TargetIcon = ({ size, ...p }: P) => (
   <svg {...base(size)} {...p}>
     <circle cx="8" cy="8" r="5.5" />

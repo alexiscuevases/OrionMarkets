@@ -7,7 +7,7 @@ import {
 import { isLiveCapable } from '../data/live';
 import MarketContextBar from './MarketContextBar';
 import {
-  AreaIcon, CandlesIcon, LayersIcon, LineIcon, OhlcIcon, SparkleIcon, TargetIcon,
+  AreaIcon, BlocksIcon, CandlesIcon, LayersIcon, LineIcon, OhlcIcon, SparkleIcon, TargetIcon,
 } from './icons';
 
 interface Props {
@@ -63,6 +63,7 @@ export default function ChartPanel({
 }: Props) {
   const [kind, setKind] = useState<ChartKind>('candlestick');
   const [showSignals, setShowSignals] = useState(true);
+  const [showSmc, setShowSmc] = useState(true);
   const [signalFilter, setSignalFilter] = useState<SignalFilter>('activas');
   const [indicators, setIndicators] = useState<Indicators>({
     ema20: true,
@@ -299,6 +300,14 @@ export default function ChartPanel({
         )}
 
         <button
+          className={`tool-toggle tool-toggle--ai ${showSmc ? 'tool-toggle--on' : ''}`}
+          title="Zonas institucionales, liquidez y movimiento probable"
+          onClick={() => setShowSmc((v) => !v)}
+        >
+          <BlocksIcon size={13} /> Smart Money
+        </button>
+
+        <button
           className={`tool-toggle tool-toggle--ai ${showSignals ? 'tool-toggle--on' : ''}`}
           onClick={() => setShowSignals((v) => !v)}
         >
@@ -313,6 +322,7 @@ export default function ChartPanel({
             tf={tf}
             kind={kind}
             showSignals={showSignals}
+            showSmc={showSmc}
             indicators={indicators}
             activeSignal={activeSignal}
             series={series}
