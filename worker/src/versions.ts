@@ -16,11 +16,15 @@
 /** Detectores deterministas (patterns.ts + filtros globales + SMC en dossier). */
 export const DETECTOR_VERSION = '2.1.0';
 
-/** System prompt de evaluación de señales (ai.ts). */
-export const PROMPT_VERSION = '3.0.0';
+/** System prompt de evaluación de señales (ai.ts).
+    3.1.0: régimen de mercado, walk-forward del patrón y campo invalidation. */
+export const PROMPT_VERSION = '3.1.0';
 
-/** Prompt de reflexión sobre errores (learn.ts). */
-export const REFLECT_PROMPT_VERSION = '1.0.0';
+/** Prompt de reflexión sobre errores (learn.ts).
+    1.1.0: casos con regime/mistakeType/cause y salida con taxonomía. */
+export const REFLECT_PROMPT_VERSION = '1.1.0';
 
-/** Estrategia global de scoring (scoring.ts: pesos y dimensiones). */
-export const STRATEGY_VERSION = '1.2.0';
+/** Estrategia global de scoring (scoring.ts: pesos y dimensiones).
+    2.0.0: pesos adaptativos (scoring_weights), dimensión regime y
+    multiplicador de salud del patrón (pattern_health). */
+export const STRATEGY_VERSION = '2.0.0';

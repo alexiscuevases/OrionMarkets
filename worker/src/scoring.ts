@@ -1,11 +1,19 @@
+import { expectancyOf } from './health';
+import { regimeAligned } from './regime';
 import type { AiVerdict, CalibrationBucket, ScoreBreakdown, SignalContext } from './types';
 
-/* Paso 4 — sistema de scoring.
+/* Paso 4 — sistema de scoring adaptativo.
    Cada dimensión se puntúa 0-5. Las computables salen del dossier
    determinista; noticias y sentimiento las aporta la IA (o neutral 3).
-   El overall pondera las dimensiones y ajusta ±10 con la confianza IA. */
+   El overall pondera las dimensiones y ajusta ±10 con la confianza IA.
 
-const WEIGHTS: Record<keyof ScoreBreakdown, number> = {
+   Los pesos ya no son fijos: DEFAULT_WEIGHTS es el punto de partida y
+   evolveWeights() los ajusta periódicamente con los cierres reales
+   (determinista, sin ML). La media ponderada se normaliza por la suma de
+   pesos, así la escala 0-100 no se mueve aunque los pesos cambien —
+   PAPER_MIN_SCORE y las comparaciones históricas siguen siendo válidas. */
+
+export const DEFAULT_WEIGHTS: Record<keyof ScoreBreakdown, number> = {
   trend: 1.5,
   momentum: 1.2,
   volume: 0.8,
@@ -16,7 +24,10 @@ const WEIGHTS: Record<keyof ScoreBreakdown, number> = {
   institutional: 1.0,
   riskReward: 1.4,
   history: 1.3,
+  regime: 1.2,
 };
+
+export type ScoringWeights = Record<keyof ScoreBreakdown, number>;
 
 /** Tramo de calibración aplicable a una confianza IA declarada. */
 export function calibrationFor(
@@ -28,10 +39,20 @@ export function calibrationFor(
   return buckets.find((b) => b.bucket === key) ?? null;
 }
 
+export interface ScoreOptions {
+  /** Pesos vigentes (scoring_weights); ausente → DEFAULT_WEIGHTS. */
+  weights?: ScoringWeights;
+  /** Multiplicador de salud del patrón (pattern_health); 1 = sano. */
+  healthMultiplier?: number;
+  /** Rendimiento del patrón bajo el régimen actual (muestra >= 10). */
+  patternRegimeStats?: { total: number; tpRate: number; avgRr: number } | null;
+}
+
 export function scoreSignal(
   ctx: SignalContext,
   ai: AiVerdict,
   calib: CalibrationBucket | null = null,
+  opts: ScoreOptions = {},
 ): {
   breakdown: ScoreBreakdown;
   overall: number;
@@ -99,25 +120,55 @@ export function scoreSignal(
   );
 
   // Historia: expectancia real del patrón en este símbolo+intervalo
-  // (tpRate·avgRr − (1 − tpRate), en múltiplos de R). Neutral sin muestra.
-  const mine = ctx.recentOutcomes.find((o) => o.pattern === ctx.pattern);
+  // (walk-forward si el dossier lo trae; si no, ventana completa). Neutral
+  // sin muestra.
   let history = 3;
-  if (mine && mine.total >= 10) {
-    const exp = mine.tpRate * (mine.avgRr || ctx.riskReward) - (1 - mine.tpRate);
-    history = exp > 0.5 ? 5 : exp > 0.15 ? 4 : exp > -0.1 ? 3 : exp > -0.4 ? 2 : 1;
+  const wf = ctx.patternWalkForward;
+  if (wf && wf.totalTrades >= 10) {
+    history = expectancyLadder(wf.expectancy);
+    // walk-forward: el deterioro reciente recorta la dimensión aunque el
+    // histórico completo siga siendo bueno
+    if (wf.degradationScore >= 0.35 && history > 1) history -= 1;
+  } else {
+    const mine = ctx.recentOutcomes.find((o) => o.pattern === ctx.pattern);
+    if (mine && mine.total >= 10) {
+      history = expectancyLadder(expectancyOf(mine.tpRate, mine.avgRr || ctx.riskReward));
+    }
+  }
+
+  // Régimen: encaje de la señal con el estado del mercado. Con muestra real
+  // del patrón bajo este régimen manda la expectancia condicionada; sin
+  // muestra, heurística de alineación
+  let regime = 3;
+  if (ctx.marketRegime) {
+    const prs = opts.patternRegimeStats ?? ctx.patternRegimeStats;
+    if (prs && prs.total >= 10) {
+      regime = expectancyLadder(expectancyOf(prs.tpRate, prs.avgRr || ctx.riskReward));
+    } else {
+      const aligned = regimeAligned(ctx.marketRegime, ctx.direction);
+      regime =
+        aligned === true ? 4
+        : aligned === false ? 1
+        : ctx.marketRegime === 'HIGH_VOLATILITY' ? 2
+        : ctx.marketRegime === 'LOW_VOLATILITY' ? 2
+        : 3; // RANGE: neutral (los reversals viven ahí)
+    }
   }
 
   const breakdown: ScoreBreakdown = {
-    trend, momentum, volume, volatility, macro, news, sentiment, institutional, riskReward, history,
+    trend, momentum, volume, volatility, macro, news, sentiment, institutional,
+    riskReward, history, regime: clamp5(regime),
   };
 
   // Media ponderada 0-5 → 0-100, con ajuste IA de ±10 puntos.
   // El ajuste declarado por la IA se corrige con su calibración empírica:
   // acierto real de sus veredictos pasados en el mismo tramo de confianza.
   // El peso de la corrección crece con la muestra (total a partir de 60).
-  const totalWeight = Object.values(WEIGHTS).reduce((a, b) => a + b, 0);
-  const weighted = (Object.keys(breakdown) as (keyof ScoreBreakdown)[])
-    .reduce((sum, k) => sum + breakdown[k] * WEIGHTS[k], 0) / totalWeight;
+  const weights = opts.weights ?? DEFAULT_WEIGHTS;
+  const dims = Object.keys(breakdown) as (keyof ScoreBreakdown)[];
+  const totalWeight = dims.reduce((a, k) => a + (weights[k] ?? DEFAULT_WEIGHTS[k]), 0);
+  const weighted = dims
+    .reduce((sum, k) => sum + breakdown[k] * (weights[k] ?? DEFAULT_WEIGHTS[k]), 0) / totalWeight;
   const base = (weighted / 5) * 100;
   let aiAdjust = ai.action === 'skip' ? -10 : ((ai.confidence - 50) / 50) * 10;
   if (calib && calib.n >= 20 && ai.action !== 'skip') {
@@ -126,12 +177,95 @@ export function scoreSignal(
     aiAdjust = aiAdjust * (1 - w) + empirical * w;
   }
 
+  // Salud del patrón: multiplicador gradual (pattern_health). 1 = intacto;
+  // un patrón en degradación pierde prioridad sin llegar al skip binario.
+  const mult = opts.healthMultiplier ?? 1;
+
   return {
     breakdown,
-    overall: Math.max(0, Math.min(100, Math.round(base + aiAdjust))),
+    overall: Math.max(0, Math.min(100, Math.round((base + aiAdjust) * mult))),
   };
+}
+
+/** Escalera común expectancia (R) → puntuación 1-5. */
+function expectancyLadder(exp: number): number {
+  return exp > 0.5 ? 5 : exp > 0.15 ? 4 : exp > -0.1 ? 3 : exp > -0.4 ? 2 : 1;
 }
 
 function clamp5(v: number): number {
   return Math.max(0, Math.min(5, Math.round(v)));
+}
+
+/* ---------- evolución de pesos (Mejora 2) ----------
+   Determinista y acotada: cada dimensión se compara entre cierres ganadores
+   y perdedores; las dimensiones que separan bien (score alto en ganadores,
+   bajo en perdedores) ganan peso y las ruidosas lo pierden. La suma total
+   se renormaliza para conservar la escala del score. */
+
+export interface DimensionPerformance {
+  dimension: keyof ScoreBreakdown;
+  avgWin: number;  // media 0-5 de la dimensión en cierres tp_hit
+  avgLoss: number; // media 0-5 en cierres sl_hit
+  nWin: number;
+  nLoss: number;
+}
+
+export const WEIGHT_EVOLUTION = {
+  learningRate: 0.15,
+  minWeight: 0.5,
+  maxWeight: 2.0,
+  minSamplesPerSide: 10, // nWin y nLoss mínimos para mover una dimensión
+} as const;
+
+export function evolveWeights(
+  current: ScoringWeights,
+  performance: DimensionPerformance[],
+): ScoringWeights {
+  const cfg = WEIGHT_EVOLUTION;
+  const targetSum = Object.values(DEFAULT_WEIGHTS).reduce((a, b) => a + b, 0);
+
+  const next: ScoringWeights = { ...DEFAULT_WEIGHTS, ...current };
+  for (const p of performance) {
+    if (!(p.dimension in next)) continue;
+    if (p.nWin < cfg.minSamplesPerSide || p.nLoss < cfg.minSamplesPerSide) continue;
+    // separación normalizada a [-1, 1]: cuánto distingue ganadores de perdedores
+    const predictiveness = Math.max(-1, Math.min(1, (p.avgWin - p.avgLoss) / 5));
+    const moved = next[p.dimension] * (1 + cfg.learningRate * predictiveness);
+    next[p.dimension] = Math.max(cfg.minWeight, Math.min(cfg.maxWeight, moved));
+  }
+
+  // renormaliza a la suma de referencia → la escala 0-100 no se mueve
+  const sum = Object.values(next).reduce((a, b) => a + b, 0);
+  if (sum > 0) {
+    for (const k of Object.keys(next) as (keyof ScoreBreakdown)[]) {
+      next[k] = Math.round((next[k] * targetSum / sum) * 1000) / 1000;
+    }
+  }
+  return next;
+}
+
+/**
+ * Rendimiento por dimensión a partir de cierres reales: cada fila es el
+ * scores_json de una evaluación (buy/sell, sin gates) con su outcome.
+ */
+export function computeDimensionPerformance(
+  rows: { breakdown: Partial<ScoreBreakdown>; outcome: 'tp_hit' | 'sl_hit' }[],
+): DimensionPerformance[] {
+  const dims = Object.keys(DEFAULT_WEIGHTS) as (keyof ScoreBreakdown)[];
+  return dims.map((dimension) => {
+    let winSum = 0; let nWin = 0; let lossSum = 0; let nLoss = 0;
+    for (const r of rows) {
+      const v = r.breakdown[dimension];
+      if (typeof v !== 'number' || !Number.isFinite(v)) continue;
+      if (r.outcome === 'tp_hit') { winSum += v; nWin++; }
+      else { lossSum += v; nLoss++; }
+    }
+    return {
+      dimension,
+      avgWin: nWin > 0 ? winSum / nWin : 0,
+      avgLoss: nLoss > 0 ? lossSum / nLoss : 0,
+      nWin,
+      nLoss,
+    };
+  });
 }

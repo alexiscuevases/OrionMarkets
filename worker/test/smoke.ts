@@ -104,6 +104,10 @@ check('extrae JSON embebido', good.action === 'buy' && good.confidence === 78);
 check('IA no puede invertir la dirección',
   parseVerdict('{"action":"sell","confidence":90,"thesis":"t","risks":"r","sentimentScore":3,"newsScore":3}', ctx).action === 'skip');
 check('basura → skip conservador', parseVerdict('no json', ctx).action === 'skip');
+check('invalidation se conserva cuando el modelo la da',
+  parseVerdict('{"action":"buy","confidence":70,"thesis":"t","risks":"r","invalidation":"cierre bajo 1.075","sentimentScore":3,"newsScore":3}', ctx)
+    .invalidation === 'cierre bajo 1.075');
+check('invalidation ausente → vacía sin invalidar el veredicto', good.invalidation === '' && good.action === 'buy');
 
 console.log('5. scoreSignal');
 const strong = scoreSignal(ctx, good);
@@ -120,6 +124,46 @@ const badHistory = scoreSignal(
 );
 check('historial perdedor del patrón penaliza el score',
   badHistory.overall < strong.overall, `(${badHistory.overall} < ${strong.overall})`);
+
+// dimensión de régimen (scoring adaptativo)
+check('sin régimen en el dossier → dimensión neutral', strong.breakdown.regime === 3);
+const withRegime = scoreSignal({ ...ctx, marketRegime: 'TRENDING_UP' }, good);
+check('compra a favor del régimen puntúa mejor',
+  withRegime.breakdown.regime === 4 && withRegime.overall >= strong.overall);
+check('compra contra el régimen puntúa 1',
+  scoreSignal({ ...ctx, marketRegime: 'TRENDING_DOWN' }, good).breakdown.regime === 1);
+check('muestra real del patrón en el régimen manda sobre la heurística',
+  scoreSignal(
+    { ...ctx, marketRegime: 'TRENDING_DOWN', patternRegimeStats: { total: 20, tpRate: 0.7, avgRr: 2 } },
+    good,
+  ).breakdown.regime === 5);
+
+// multiplicador de salud del patrón (pattern_health)
+const degraded = scoreSignal(ctx, good, null, { healthMultiplier: 0.6 });
+check('patrón en degradación pierde score de forma gradual',
+  degraded.overall < strong.overall && degraded.overall > 0,
+  `(${degraded.overall} < ${strong.overall})`);
+
+// walk-forward en el dossier: la degradación recorta la dimensión history
+const wfStrong = scoreSignal({
+  ...ctx,
+  patternWalkForward: {
+    totalTrades: 30, winRate: 0.6, avgRR: 2, expectancy: 0.8,
+    recentTrades: 10, recentWinRate: 0.6, recentExpectancy: 0.8,
+    degradationScore: 0, status: 'healthy',
+  },
+}, good);
+const wfDegraded = scoreSignal({
+  ...ctx,
+  patternWalkForward: {
+    totalTrades: 30, winRate: 0.6, avgRR: 2, expectancy: 0.8,
+    recentTrades: 10, recentWinRate: 0.2, recentExpectancy: -0.4,
+    degradationScore: 1, status: 'degrading',
+  },
+}, good);
+check('degradación walk-forward recorta la dimensión history',
+  wfDegraded.breakdown.history < wfStrong.breakdown.history,
+  `(${wfDegraded.breakdown.history} < ${wfStrong.breakdown.history})`);
 
 console.log('6. aprendizaje');
 const calib = [

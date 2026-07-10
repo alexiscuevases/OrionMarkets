@@ -1,6 +1,9 @@
-import { DETECTOR_VERSION } from './versions';
+import { DETECTOR_VERSION, STRATEGY_VERSION } from './versions';
 import type { CalibrationBucket, Candle, DetectedSignal, Lesson, Outcome, SignalRow } from './types';
 import type { MistakeCase } from './learn';
+import type { PatternHealth } from './health';
+import type { ScoringWeights } from './scoring';
+import type { TradeReview } from './review';
 
 /* Acceso a D1. Los inserts van en lotes: D1 limita los parámetros
    por sentencia, así que agrupamos 12 filas (96 binds) por INSERT. */
@@ -97,12 +100,13 @@ export async function insertSignals(
     db
       .prepare(
         `INSERT OR IGNORE INTO signals
-         (sig_key, symbol, interval, ts, pattern, direction, entry, stop, target, rr, confidence, created_at, detector_version)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (sig_key, symbol, interval, ts, pattern, direction, entry, stop, target, rr, confidence, created_at, detector_version, regime)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         s.sigKey, s.symbol, s.interval, s.ts, s.pattern, s.direction,
         s.entry, s.stop, s.target, s.rr, s.confidence, now, DETECTOR_VERSION,
+        s.regime ?? null,
       ),
   );
 
@@ -207,11 +211,13 @@ export async function getReevaluableSignals(
 }
 
 /** Rendimiento histórico por patrón (dossier IA, gate y scoring).
-    avgRr permite calcular expectancia: tpRate·avgRr − (1 − tpRate). */
+    avgRr permite calcular expectancia: tpRate·avgRr − (1 − tpRate).
+    Con `sinceTs` restringe a cierres recientes (ventana walk-forward). */
 export async function getPatternStats(
   db: D1Database,
   symbol: string,
   interval: string,
+  sinceTs = 0,
 ): Promise<{ pattern: string; total: number; tpRate: number; avgRr: number }[]> {
   const { results } = await db
     .prepare(
@@ -221,11 +227,278 @@ export async function getPatternStats(
               ROUND(AVG(rr), 2) AS avgRr
        FROM signals
        WHERE symbol = ? AND interval = ? AND outcome IN ('tp_hit', 'sl_hit')
+         AND outcome_ts >= ?
        GROUP BY pattern`,
     )
-    .bind(symbol, interval)
+    .bind(symbol, interval, sinceTs)
     .all<{ pattern: string; total: number; tpRate: number; avgRr: number }>();
   return results;
+}
+
+/** Rendimiento del patrón condicionado al régimen de mercado (Mejora 1/2):
+    jurisprudencia para la dimensión regime del scoring y el dossier. */
+export async function getPatternRegimeStats(
+  db: D1Database,
+  symbol: string,
+  interval: string,
+  pattern: string,
+  regime: string,
+): Promise<{ total: number; tpRate: number; avgRr: number } | null> {
+  const row = await db
+    .prepare(
+      `SELECT COUNT(*) AS total,
+              ROUND(AVG(CASE WHEN outcome = 'tp_hit' THEN 1.0 ELSE 0 END), 2) AS tpRate,
+              ROUND(AVG(rr), 2) AS avgRr
+       FROM signals
+       WHERE symbol = ? AND interval = ? AND pattern = ? AND regime = ?
+         AND outcome IN ('tp_hit', 'sl_hit')`,
+    )
+    .bind(symbol, interval, pattern, regime)
+    .first<{ total: number; tpRate: number | null; avgRr: number | null }>();
+  if (!row || row.total === 0) return null;
+  return { total: row.total, tpRate: row.tpRate ?? 0, avgRr: row.avgRr ?? 0 };
+}
+
+/* ---------- régimen de mercado: backfill incremental ---------- */
+
+/** Señales de un mercado sin régimen anotado (filas previas a la 0007). */
+export async function getSignalsMissingRegime(
+  db: D1Database,
+  symbol: string,
+  interval: string,
+  limit: number,
+): Promise<{ sigKey: string; ts: number }[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT sig_key AS sigKey, ts FROM signals
+       WHERE symbol = ? AND interval = ? AND regime IS NULL
+       ORDER BY ts DESC LIMIT ?`,
+    )
+    .bind(symbol, interval, limit)
+    .all<{ sigKey: string; ts: number }>();
+  return results;
+}
+
+export async function updateSignalRegimes(
+  db: D1Database,
+  updates: { sigKey: string; regime: string }[],
+): Promise<void> {
+  if (updates.length === 0) return;
+  const stmts = updates.map((u) =>
+    db.prepare('UPDATE signals SET regime = ? WHERE sig_key = ?').bind(u.regime, u.sigKey),
+  );
+  for (let i = 0; i < stmts.length; i += STMTS_PER_BATCH) {
+    await db.batch(stmts.slice(i, i + STMTS_PER_BATCH));
+  }
+}
+
+/* ---------- salud de patrones (Mejoras 3 y 5) ---------- */
+
+export interface PatternHealthRow extends PatternHealth {
+  updatedAt: number;
+}
+
+export async function upsertPatternHealth(
+  db: D1Database,
+  rows: PatternHealth[],
+): Promise<void> {
+  if (rows.length === 0) return;
+  const now = Date.now();
+  const stmts = rows.map((h) =>
+    db
+      .prepare(
+        `INSERT INTO pattern_health
+         (symbol, interval, pattern, detector_version, total_trades, win_rate,
+          avg_rr, expectancy, recent_trades, recent_win_rate, recent_expectancy,
+          degradation_score, health, status, confidence_multiplier, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (symbol, interval, pattern) DO UPDATE SET
+           detector_version = excluded.detector_version,
+           total_trades = excluded.total_trades,
+           win_rate = excluded.win_rate,
+           avg_rr = excluded.avg_rr,
+           expectancy = excluded.expectancy,
+           recent_trades = excluded.recent_trades,
+           recent_win_rate = excluded.recent_win_rate,
+           recent_expectancy = excluded.recent_expectancy,
+           degradation_score = excluded.degradation_score,
+           health = excluded.health,
+           status = excluded.status,
+           confidence_multiplier = excluded.confidence_multiplier,
+           updated_at = excluded.updated_at`,
+      )
+      .bind(
+        h.symbol, h.interval, h.pattern, DETECTOR_VERSION, h.totalTrades,
+        h.winRate, h.avgRR, h.expectancy, h.recentTrades, h.recentWinRate,
+        h.recentExpectancy, h.degradationScore, h.health, h.status,
+        h.confidenceMultiplier, now,
+      ),
+  );
+  for (let i = 0; i < stmts.length; i += STMTS_PER_BATCH) {
+    await db.batch(stmts.slice(i, i + STMTS_PER_BATCH));
+  }
+}
+
+/** Toda la tabla de salud como mapa 'symbol|interval|pattern' → fila. */
+export async function getPatternHealthMap(
+  db: D1Database,
+): Promise<Map<string, PatternHealthRow>> {
+  const { results } = await db
+    .prepare(
+      `SELECT symbol, interval, pattern,
+              total_trades AS totalTrades, win_rate AS winRate, avg_rr AS avgRR,
+              expectancy, recent_trades AS recentTrades,
+              recent_win_rate AS recentWinRate, recent_expectancy AS recentExpectancy,
+              degradation_score AS degradationScore, health, status,
+              confidence_multiplier AS confidenceMultiplier, updated_at AS updatedAt
+       FROM pattern_health`,
+    )
+    .all<PatternHealthRow>();
+  const map = new Map<string, PatternHealthRow>();
+  for (const r of results) map.set(`${r.symbol}|${r.interval}|${r.pattern}`, r);
+  return map;
+}
+
+/* ---------- pesos de scoring evolutivos (Mejora 2) ---------- */
+
+export async function getScoringWeights(
+  db: D1Database,
+): Promise<{ weights: ScoringWeights; samples: number; updatedAt: number } | null> {
+  const row = await db
+    .prepare('SELECT weights_json, samples, updated_at FROM scoring_weights WHERE id = 1')
+    .first<{ weights_json: string; samples: number; updated_at: number }>();
+  if (!row) return null;
+  try {
+    return {
+      weights: JSON.parse(row.weights_json) as ScoringWeights,
+      samples: row.samples,
+      updatedAt: row.updated_at,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function saveScoringWeights(
+  db: D1Database,
+  weights: ScoringWeights,
+  samples: number,
+): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO scoring_weights (id, weights_json, samples, strategy_version, updated_at)
+       VALUES (1, ?, ?, ?, ?)
+       ON CONFLICT (id) DO UPDATE SET
+         weights_json = excluded.weights_json,
+         samples = excluded.samples,
+         strategy_version = excluded.strategy_version,
+         updated_at = excluded.updated_at`,
+    )
+    .bind(JSON.stringify(weights), samples, STRATEGY_VERSION, Date.now())
+    .run();
+}
+
+/** Desgloses de scoring de cierres reales (buy/sell, sin gates) para la
+    evolución de pesos. Los más recientes primero. */
+export async function getClosedBreakdowns(
+  db: D1Database,
+  limit: number,
+): Promise<{ scoresJson: string; outcome: 'tp_hit' | 'sl_hit' }[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT e.scores_json AS scoresJson, s.outcome
+       FROM evaluations e
+       JOIN signals s ON s.sig_key = e.sig_key
+       WHERE e.ai_action IN ('buy', 'sell')
+         AND e.model NOT LIKE 'gate:%'
+         AND s.outcome IN ('tp_hit', 'sl_hit')
+       ORDER BY s.outcome_ts DESC
+       LIMIT ?`,
+    )
+    .bind(limit)
+    .all<{ scoresJson: string; outcome: 'tp_hit' | 'sl_hit' }>();
+  return results;
+}
+
+/** Nº de cierres evaluados (cursor de la evolución de pesos). */
+export async function countClosedEvaluated(db: D1Database): Promise<number> {
+  const row = await db
+    .prepare(
+      `SELECT COUNT(*) AS n
+       FROM evaluations e
+       JOIN signals s ON s.sig_key = e.sig_key
+       WHERE e.ai_action IN ('buy', 'sell')
+         AND e.model NOT LIKE 'gate:%'
+         AND s.outcome IN ('tp_hit', 'sl_hit')`,
+    )
+    .first<{ n: number }>();
+  return row?.n ?? 0;
+}
+
+/* ---------- evaluación continua (Mejora 7) ---------- */
+
+/** Cierres con evaluación aún sin revisión determinista (trade_reviews). */
+export interface UnreviewedClosed extends SignalRow {
+  aiAction: string | null;
+  aiConfidence: number | null;
+  overallScore: number | null;
+  model: string | null;
+  contextJson: string | null;
+}
+
+export async function getUnreviewedClosed(
+  db: D1Database,
+  limit: number,
+): Promise<UnreviewedClosed[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT s.sig_key AS sigKey, s.symbol, s.interval, s.ts, s.pattern, s.direction,
+              s.entry, s.stop, s.target, s.rr, s.confidence, s.outcome,
+              s.outcome_ts AS outcomeTs, s.regime,
+              e.ai_action AS aiAction, e.ai_confidence AS aiConfidence,
+              e.overall_score AS overallScore, e.model, e.context_json AS contextJson
+       FROM signals s
+       JOIN evaluations e ON e.sig_key = s.sig_key
+       LEFT JOIN trade_reviews tr ON tr.sig_key = s.sig_key
+       WHERE s.outcome IN ('tp_hit', 'sl_hit', 'expired')
+         AND tr.sig_key IS NULL
+       ORDER BY s.outcome_ts ASC
+       LIMIT ?`,
+    )
+    .bind(limit)
+    .all<UnreviewedClosed>();
+  return results;
+}
+
+export async function insertTradeReviews(
+  db: D1Database,
+  reviews: TradeReview[],
+): Promise<void> {
+  if (reviews.length === 0) return;
+  const now = Date.now();
+  const stmts = reviews.map((r) =>
+    db
+      .prepare(
+        `INSERT OR IGNORE INTO trade_reviews
+         (sig_key, symbol, interval, pattern, regime, outcome, ai_action,
+          ai_confidence, overall_score, mistake_type, cause, ai_correct,
+          pattern_worked, regime_aligned, confidence_calibrated,
+          affected_patterns, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        r.sigKey, r.symbol, r.interval, r.pattern, r.regime, r.outcome,
+        r.aiAction, r.aiConfidence, r.overallScore, r.mistakeType, r.cause,
+        r.aiCorrect === null ? null : r.aiCorrect ? 1 : 0,
+        r.patternWorked ? 1 : 0,
+        r.regimeAligned === null ? null : r.regimeAligned ? 1 : 0,
+        r.confidenceCalibrated === null ? null : r.confidenceCalibrated ? 1 : 0,
+        JSON.stringify(r.affectedPatterns), now,
+      ),
+  );
+  for (let i = 0; i < stmts.length; i += STMTS_PER_BATCH) {
+    await db.batch(stmts.slice(i, i + STMTS_PER_BATCH));
+  }
 }
 
 /* ---------- aprendizaje continuo ---------- */
@@ -274,14 +547,25 @@ export async function getLessons(db: D1Database, limit = 24): Promise<Lesson[]> 
 /** Inserta lecciones nuevas y poda: se conservan las 15 más recientes. */
 export async function addLessons(
   db: D1Database,
-  lessons: { scope: string; lesson: string; support: number }[],
+  lessons: {
+    scope: string; lesson: string; support: number;
+    mistakeType?: string | null; cause?: string | null; affectedPatterns?: string[];
+  }[],
 ): Promise<void> {
   if (lessons.length === 0) return;
   const now = Date.now();
   const stmts = lessons.map((l) =>
     db
-      .prepare('INSERT INTO lessons (scope, lesson, support, created_at) VALUES (?, ?, ?, ?)')
-      .bind(l.scope, l.lesson, l.support, now),
+      .prepare(
+        `INSERT INTO lessons (scope, lesson, support, created_at, mistake_type, cause, affected_patterns)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        l.scope, l.lesson, l.support, now,
+        l.mistakeType ?? null, l.cause ?? null,
+        l.affectedPatterns && l.affectedPatterns.length > 0
+          ? JSON.stringify(l.affectedPatterns) : null,
+      ),
   );
   stmts.push(
     db.prepare(
@@ -301,12 +585,14 @@ export async function getAiMistakes(
 ): Promise<(MistakeCase & { outcomeTs: number })[]> {
   const { results } = await db
     .prepare(
-      `SELECT s.symbol, s.interval, s.pattern, s.direction, s.rr,
+      `SELECT s.symbol, s.interval, s.pattern, s.direction, s.rr, s.regime,
               e.ai_action AS aiAction, e.ai_confidence AS aiConfidence,
               SUBSTR(e.ai_thesis, 1, 200) AS aiThesis,
-              s.outcome, s.outcome_ts AS outcomeTs
+              s.outcome, s.outcome_ts AS outcomeTs,
+              tr.mistake_type AS mistakeType, tr.cause
        FROM evaluations e
        JOIN signals s ON s.sig_key = e.sig_key
+       LEFT JOIN trade_reviews tr ON tr.sig_key = s.sig_key
        WHERE e.model NOT LIKE 'gate:%'
          AND s.outcome_ts > ?
          AND ((e.ai_action IN ('buy', 'sell') AND s.outcome = 'sl_hit')
@@ -324,12 +610,18 @@ export async function getAiMistakes(
 export async function getUnindexedClosed(
   db: D1Database,
   limit: number,
-): Promise<(SignalRow & { aiAction: string | null; aiConfidence: number | null })[]> {
+): Promise<(SignalRow & {
+  aiAction: string | null;
+  aiConfidence: number | null;
+  aiScore: number | null;
+})[]> {
   const { results } = await db
     .prepare(
       `SELECT s.sig_key AS sigKey, s.symbol, s.interval, s.ts, s.pattern, s.direction,
               s.entry, s.stop, s.target, s.rr, s.confidence, s.outcome, s.outcome_ts AS outcomeTs,
-              e.ai_action AS aiAction, e.ai_confidence AS aiConfidence
+              s.regime,
+              e.ai_action AS aiAction, e.ai_confidence AS aiConfidence,
+              e.overall_score AS aiScore
        FROM signals s
        LEFT JOIN evaluations e ON e.sig_key = s.sig_key
        WHERE s.outcome IN ('tp_hit', 'sl_hit') AND s.indexed_at IS NULL
@@ -337,7 +629,7 @@ export async function getUnindexedClosed(
        LIMIT ?`,
     )
     .bind(limit)
-    .all<SignalRow & { aiAction: string | null; aiConfidence: number | null }>();
+    .all<SignalRow & { aiAction: string | null; aiConfidence: number | null; aiScore: number | null }>();
   return results;
 }
 

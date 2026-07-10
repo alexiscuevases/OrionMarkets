@@ -1,9 +1,14 @@
 import { aiUsage } from './aiLog';
 import { handleAuth, requireAdminAuth, requireUser } from './auth';
 import { runBacktest, type BacktestParams } from './backtest';
-import { getAiCalibration, getLessons, getMemoryProgress, loadCandles } from './db';
+import {
+  getAiCalibration, getLessons, getMemoryProgress, getPatternHealthMap,
+  getScoringWeights, loadCandles,
+} from './db';
 import { clientIp, corsHeaders, jsonWith, rateLimit, readJsonBody } from './http';
-import { atr, ema, rsi, slopePct } from './indicators';
+import { ema, rsi } from './indicators';
+import { regimeAt } from './regime';
+import { DEFAULT_WEIGHTS } from './scoring';
 import { parseEvents, upsertEvents } from './marketContext';
 import { healthReport, recentRuns, recordRunSkipped } from './observe';
 import { accountSummary, DEFAULT_ACCOUNT_ID, resetAccount } from './paper';
@@ -387,15 +392,19 @@ export default {
           const last = closes.length - 1;
           const price = closes[last];
 
-          const e50 = ema(closes, 50);
-          const slope = slopePct(e50, last, 30);
-          const trend = slope > 0.01 ? 'alcista' : slope < -0.01 ? 'bajista' : 'lateral';
+          // un único clasificador de régimen para todo el sistema (regime.ts);
+          // las etiquetas legibles se derivan de él para no duplicar umbrales
+          const info = regimeAt(candles, last);
+          const slope = info?.emaSlopePct ?? 0;
+          const trend =
+            info?.regime === 'TRENDING_UP' ? 'alcista'
+            : info?.regime === 'TRENDING_DOWN' ? 'bajista' : 'lateral';
           const mag = Math.abs(slope);
           const trendStrength =
             trend === 'lateral' ? null : mag >= 0.035 ? 'fuerte' : mag >= 0.018 ? 'moderada' : 'débil';
 
           const e200 = ema(closes, 200);
-          const atrPct = Math.round(((atr(candles, 14)[last] ?? 0) / price) * 10000) / 100;
+          const atrPct = info?.atrPct ?? 0;
           const volatility =
             atrPct < 0.06 ? 'muy baja'
             : atrPct < 0.12 ? 'baja'
@@ -414,6 +423,8 @@ export default {
 
           states.push({
             symbol,
+            regime: info?.regime ?? null,
+            adx: info?.adx ?? null,
             trend,
             trendStrength,
             volatility,
@@ -467,6 +478,21 @@ export default {
           getMemoryProgress(env.DB),
         ]);
         return json({ lessons, calibration, memory });
+      }
+
+      /* --- salud de patrones (walk-forward) y pesos de scoring vigentes --- */
+      if (pathname === '/api/patterns/health') {
+        const [healthMap, weights] = await Promise.all([
+          getPatternHealthMap(env.DB),
+          getScoringWeights(env.DB),
+        ]);
+        return json({
+          patterns: [...healthMap.values()],
+          weights: weights?.weights ?? DEFAULT_WEIGHTS,
+          weightsSamples: weights?.samples ?? 0,
+          weightsUpdatedAt: weights?.updatedAt ?? null,
+          adaptive: weights !== null,
+        });
       }
 
       /* --- riesgo (Fase 4): cálculo puro de tamaño de posición --- */
@@ -610,7 +636,7 @@ async function tableCounts(db: D1Database): Promise<Record<string, number>> {
   const tables = [
     'candles', 'signals', 'evaluations', 'evaluation_history', 'lessons',
     'ai_calls', 'pipeline_runs', 'backtests', 'paper_positions', 'paper_trades',
-    'market_events',
+    'market_events', 'pattern_health', 'trade_reviews', 'scoring_weights',
   ];
   const res = await db.batch(tables.map((t) => db.prepare(`SELECT COUNT(*) AS n FROM ${t}`)));
   const out: Record<string, number> = {};

@@ -5,29 +5,40 @@ import {
   type WorkflowStepConfig,
 } from 'cloudflare:workers';
 import {
-  addLessons, getAiCalibration, getAiMistakes, getCursor, getLessons,
-  getOpenSignals, getReevaluableSignals, getUnevaluatedSignals,
-  getUnindexedClosed, insertSignals, loadCandles, markIndexed, setCursor,
-  updateOutcomes, upsertCandles,
+  addLessons, countClosedEvaluated, getAiCalibration, getAiMistakes,
+  getClosedBreakdowns, getCursor, getLessons, getOpenSignals,
+  getPatternHealthMap, getPatternStats, getReevaluableSignals,
+  getScoringWeights, getSignalsMissingRegime, getUnevaluatedSignals,
+  getUnindexedClosed, getUnreviewedClosed, insertSignals, insertTradeReviews,
+  loadCandles, markIndexed, saveScoringWeights, setCursor, updateOutcomes,
+  updateSignalRegimes, upsertCandles, upsertPatternHealth,
+  type PatternHealthRow,
 } from './db';
 import { fetchSeries } from './twelvedata';
 import { detectAll, profileFor, resolveOutcome } from './patterns';
 import { buildContext } from './enrich';
 import { evaluateSignal } from './ai';
-import { calibrationFor, scoreSignal } from './scoring';
+import {
+  calibrationFor, computeDimensionPerformance, DEFAULT_WEIGHTS, evolveWeights,
+  scoreSignal, type ScoringWeights,
+} from './scoring';
 import {
   caseText, embedTexts, featuresFromCandles, featuresFromContext,
   reflectOnMistakes, summarizeSimilarCases,
 } from './learn';
+import { computePatternHealth, expectancyOf, HEALTH_THRESHOLDS } from './health';
+import { makeRegimeCalculator } from './regime';
+import { classifyTradeReview } from './review';
 import { costRates, pruneAiCalls } from './aiLog';
 import { recordRunEnd, recordRunStart } from './observe';
 import {
   ensureAccount, openPaperPositions, resolvePaperPositions,
 } from './paper';
-import { PROMPT_VERSION } from './versions';
+import { PROMPT_VERSION, STRATEGY_VERSION } from './versions';
 import {
   HISTORY_START, INTERVALS, INTERVAL_MS, SYMBOLS,
-  type CalibrationBucket, type Env, type Interval, type SignalContext, type AiVerdict,
+  type CalibrationBucket, type Env, type Interval, type Outcome,
+  type SignalContext, type AiVerdict,
 } from './types';
 
 export interface PipelineParams {
@@ -163,15 +174,35 @@ export class OrionPipeline extends WorkflowEntrypoint<Env, PipelineParams> {
     /* ---------- FASE 2 · Detección determinista ---------- */
 
     let newSignals = 0;
+    let regimeBackfilled = 0;
     for (const symbol of SYMBOLS) {
       for (const interval of intervals) {
         const res = await step.do(`detecta ${symbol} ${interval}`, RETRY, async () => {
           const candles = await loadCandles(db, symbol, interval, 50_000);
-          if (candles.length === 0) return { inserted: 0, resolved: 0 };
+          if (candles.length === 0) return { inserted: 0, resolved: 0, regimes: 0 };
+
+          // régimen de mercado por señal (Mejora 1): un clasificador por
+          // mercado y pasada, compartiendo las velas ya cargadas (P1-3)
+          const regimeOf = makeRegimeCalculator(candles);
+          const idxByTs = new Map(candles.map((c, i) => [c.ts, i]));
 
           // detección sobre todo el histórico → también señales pasadas
-          const signals = detectAll(symbol, interval, candles);
+          const signals = detectAll(symbol, interval, candles).map((s) => ({
+            ...s,
+            regime: regimeOf(idxByTs.get(s.ts))?.regime ?? null,
+          }));
           const inserted = await insertSignals(db, signals);
+
+          // backfill incremental de régimen en señales previas a la 0007;
+          // las incomputables (fuera de ventana o sin muestra) se marcan
+          // 'UNKNOWN' para que el backfill converja en vez de reintentarlas
+          const missing = await getSignalsMissingRegime(db, symbol, interval, 300);
+          const regimeUpdates = missing.map((m) => {
+            const idx = idxByTs.get(m.ts);
+            const info = idx !== undefined ? regimeOf(idx) : null;
+            return { sigKey: m.sigKey, regime: info?.regime ?? 'UNKNOWN' };
+          });
+          await updateSignalRegimes(db, regimeUpdates);
 
           // resolver TP/SL/expiración de señales abiertas con las velas
           // nuevas; los UPDATE van en lote para no agotar subrequests
@@ -184,11 +215,42 @@ export class OrionPipeline extends WorkflowEntrypoint<Env, PipelineParams> {
             }
           }
           await updateOutcomes(db, resolutions);
-          return { inserted, resolved: resolutions.length };
+          return { inserted, resolved: resolutions.length, regimes: regimeUpdates.length };
         });
         newSignals += res.inserted;
+        regimeBackfilled += res.regimes;
       }
     }
+
+    /* ---------- FASE 2b · Salud de patrones (walk-forward) ----------
+       Tras resolver outcomes se recalcula pattern_health para los mercados
+       refrescados: ventana completa vs. reciente, degradación y estado.
+       SQL puro, cero llamadas IA; el gate y el scoring la consumen. */
+
+    const healthPatterns = await step.do('salud de patrones', RETRY, async () => {
+      const since = Date.now() - HEALTH_THRESHOLDS.recentWindowDays * 86_400_000;
+      const rows = [];
+      for (const symbol of SYMBOLS) {
+        for (const interval of intervals) {
+          const full = await getPatternStats(db, symbol, interval);
+          if (full.length === 0) continue;
+          const recent = new Map(
+            (await getPatternStats(db, symbol, interval, since)).map((r) => [r.pattern, r]),
+          );
+          for (const f of full) {
+            const r = recent.get(f.pattern);
+            rows.push(computePatternHealth(
+              { symbol, interval, pattern: f.pattern },
+              { total: f.total, tpRate: f.tpRate, avgRr: f.avgRr },
+              r ? { total: r.total, tpRate: r.tpRate, avgRr: r.avgRr }
+                : { total: 0, tpRate: 0, avgRr: 0 },
+            ));
+          }
+        }
+      }
+      await upsertPatternHealth(db, rows);
+      return rows.length;
+    });
 
     /* ---------- FASE 3 · Evaluación IA (solo patrones fiables) ---------- */
 
@@ -200,11 +262,19 @@ export class OrionPipeline extends WorkflowEntrypoint<Env, PipelineParams> {
     );
 
     // conocimiento acumulado del sistema: lecciones destiladas de errores
-    // pasados + calibración empírica de la confianza de la IA
+    // pasados + calibración empírica de la confianza de la IA + pesos de
+    // scoring vigentes + salud de patrones (arrays: el resultado de un step
+    // se persiste como JSON, un Map no sobreviviría al replay)
     const knowledge = await step.do('carga lecciones y calibración', RETRY, async () => ({
       lessons: await getLessons(db),
       calibration: await getAiCalibration(db),
+      weights: (await getScoringWeights(db))?.weights ?? null,
+      health: [...(await getPatternHealthMap(db)).values()],
     }));
+    const healthMap = new Map<string, PatternHealthRow>(
+      knowledge.health.map((h) => [`${h.symbol}|${h.interval}|${h.pattern}`, h]),
+    );
+    const weights: ScoringWeights = knowledge.weights ?? DEFAULT_WEIGHTS;
 
     let evaluated = 0;
     let topScore = 0;
@@ -216,42 +286,62 @@ export class OrionPipeline extends WorkflowEntrypoint<Env, PipelineParams> {
       });
 
       // memoria de casos: situaciones históricas casi idénticas y su
-      // resultado real; si el índice aún no existe se evalúa sin memoria
+      // resultado real; primero filtrada por marco y régimen (metadata
+      // indexes de Vectorize) y, si no hay vecinos suficientes o los
+      // índices de metadata no existen aún, la búsqueda global de siempre
       dossier.similarCases = await step.do(`similares ${sig.sigKey}`, async () => {
         try {
           const [vector] = await embedTexts(
             this.env.AI, [caseText(featuresFromContext(dossier))],
+            { db, kind: 'embed', sigKey: sig.sigKey, rates },
           );
-          const res = await this.env.VECTOR_INDEX.query(vector, {
-            topK: 8,
-            returnMetadata: 'all',
-          });
-          return summarizeSimilarCases(res.matches);
+          return summarizeSimilarCases(
+            await this.querySimilar(vector, sig.interval, dossier.marketRegime),
+          );
         } catch {
           return null;
         }
       });
 
-      // gate por historial: si el patrón acumula expectancia negativa real
-      // en este símbolo+intervalo (muestra >= 15 cierres) se descarta sin
-      // gastar cuota de IA — el sistema aprende de sus propios resultados
-      const hist = dossier.recentOutcomes.find((o) => o.pattern === sig.pattern);
-      const expectancy =
-        hist && hist.total >= 15
-          ? hist.tpRate * (hist.avgRr || sig.rr) - (1 - hist.tpRate)
-          : null;
-      if (expectancy !== null && expectancy <= 0) {
+      // gate por salud del patrón (pattern_health): 'disabled' = expectancia
+      // histórica negativa o degradación reciente severa → descarte sin
+      // gastar cuota de IA. Sin fila de salud aún (primeras pasadas tras la
+      // migración) se cae al gate clásico por expectancia inline
+      const health = healthMap.get(`${sig.symbol}|${sig.interval}|${sig.pattern}`);
+      if (health?.status === 'disabled') {
         await step.do(`gate ${sig.sigKey}`, RETRY, async () =>
-          persistEvaluation(db, 'gate:historial', sig.sigKey, dossier, {
+          persistEvaluation(db, 'gate:salud', sig.sigKey, dossier, {
             action: 'skip',
             confidence: 0,
-            thesis: `Descartada sin IA: "${sig.pattern}" acumula expectancia ${expectancy.toFixed(2)}R en ${hist!.total} cierres de ${sig.symbol} ${sig.interval}.`,
-            risks: 'Patrón con historial perdedor en este mercado.',
+            thesis: `Descartada sin IA: "${sig.pattern}" está desactivado por salud (expectancia ${health.expectancy.toFixed(2)}R en ${health.totalTrades} cierres; reciente ${health.recentExpectancy.toFixed(2)}R en ${health.recentTrades}).`,
+            risks: 'Patrón desactivado por rendimiento real en este mercado.',
+            invalidation: '',
             sentimentScore: 3,
             newsScore: 3,
           }),
         );
         continue;
+      }
+      if (!health) {
+        const hist = dossier.recentOutcomes.find((o) => o.pattern === sig.pattern);
+        const expectancy =
+          hist && hist.total >= 15
+            ? expectancyOf(hist.tpRate, hist.avgRr || sig.rr)
+            : null;
+        if (expectancy !== null && expectancy <= 0) {
+          await step.do(`gate ${sig.sigKey}`, RETRY, async () =>
+            persistEvaluation(db, 'gate:historial', sig.sigKey, dossier, {
+              action: 'skip',
+              confidence: 0,
+              thesis: `Descartada sin IA: "${sig.pattern}" acumula expectancia ${expectancy.toFixed(2)}R en ${hist!.total} cierres de ${sig.symbol} ${sig.interval}.`,
+              risks: 'Patrón con historial perdedor en este mercado.',
+              invalidation: '',
+              sentimentScore: 3,
+              newsScore: 3,
+            }),
+          );
+          continue;
+        }
       }
 
       // lecciones aplicables a esta señal: globales + las de su mercado
@@ -276,17 +366,20 @@ export class OrionPipeline extends WorkflowEntrypoint<Env, PipelineParams> {
           confidence: 0,
           thesis: 'IA no disponible tras varios reintentos; se descarta por prudencia.',
           risks: 'Evaluación IA no completada.',
+          invalidation: '',
           sentimentScore: 3,
           newsScore: 3,
         };
       }
 
-      /* ---------- FASE 4 · Scoring ---------- */
+      /* ---------- FASE 4 · Scoring adaptativo ---------- */
 
       const overall = await step.do(`scoring ${sig.sigKey}`, RETRY, async () =>
         persistEvaluation(
           db, this.env.AI_MODEL, sig.sigKey, dossier, verdict,
           calibrationFor(verdict.confidence, knowledge.calibration),
+          null,
+          { weights, healthMultiplier: health?.confidenceMultiplier ?? 1 },
         ),
       );
 
@@ -346,12 +439,11 @@ export class OrionPipeline extends WorkflowEntrypoint<Env, PipelineParams> {
         try {
           const [vector] = await embedTexts(
             this.env.AI, [caseText(featuresFromContext(dossier))],
+            { db, kind: 'embed', sigKey: sig.sigKey, rates },
           );
-          const res = await this.env.VECTOR_INDEX.query(vector, {
-            topK: 8,
-            returnMetadata: 'all',
-          });
-          return summarizeSimilarCases(res.matches);
+          return summarizeSimilarCases(
+            await this.querySimilar(vector, sig.interval, dossier.marketRegime),
+          );
         } catch {
           return null;
         }
@@ -359,26 +451,45 @@ export class OrionPipeline extends WorkflowEntrypoint<Env, PipelineParams> {
 
       const prior = { createdAt: sig.evalCreatedAt, revision: sig.revision };
 
-      // el gate por expectancia también se re-aplica: el historial del
-      // patrón puede haberse vuelto negativo desde la evaluación original
-      const hist = dossier.recentOutcomes.find((o) => o.pattern === sig.pattern);
-      const expectancy =
-        hist && hist.total >= 15
-          ? hist.tpRate * (hist.avgRr || sig.rr) - (1 - hist.tpRate)
-          : null;
-      if (expectancy !== null && expectancy <= 0) {
+      // el gate por salud también se re-aplica: el patrón puede haberse
+      // desactivado desde la evaluación original
+      const health = healthMap.get(`${sig.symbol}|${sig.interval}|${sig.pattern}`);
+      if (health?.status === 'disabled') {
         await step.do(`re-gate ${sig.sigKey}`, RETRY, async () =>
-          persistEvaluation(db, 'gate:historial', sig.sigKey, dossier, {
+          persistEvaluation(db, 'gate:salud', sig.sigKey, dossier, {
             action: 'skip',
             confidence: 0,
-            thesis: `Retirada en re-evaluación: "${sig.pattern}" acumula expectancia ${expectancy.toFixed(2)}R en ${hist!.total} cierres de ${sig.symbol} ${sig.interval}.`,
-            risks: 'Patrón con historial perdedor en este mercado.',
+            thesis: `Retirada en re-evaluación: "${sig.pattern}" está desactivado por salud (expectancia ${health.expectancy.toFixed(2)}R en ${health.totalTrades} cierres; reciente ${health.recentExpectancy.toFixed(2)}R en ${health.recentTrades}).`,
+            risks: 'Patrón desactivado por rendimiento real en este mercado.',
+            invalidation: '',
             sentimentScore: 3,
             newsScore: 3,
           }, null, prior),
         );
         reevaluated++;
         continue;
+      }
+      if (!health) {
+        const hist = dossier.recentOutcomes.find((o) => o.pattern === sig.pattern);
+        const expectancy =
+          hist && hist.total >= 15
+            ? expectancyOf(hist.tpRate, hist.avgRr || sig.rr)
+            : null;
+        if (expectancy !== null && expectancy <= 0) {
+          await step.do(`re-gate ${sig.sigKey}`, RETRY, async () =>
+            persistEvaluation(db, 'gate:historial', sig.sigKey, dossier, {
+              action: 'skip',
+              confidence: 0,
+              thesis: `Retirada en re-evaluación: "${sig.pattern}" acumula expectancia ${expectancy.toFixed(2)}R en ${hist!.total} cierres de ${sig.symbol} ${sig.interval}.`,
+              risks: 'Patrón con historial perdedor en este mercado.',
+              invalidation: '',
+              sentimentScore: 3,
+              newsScore: 3,
+            }, null, prior),
+          );
+          reevaluated++;
+          continue;
+        }
       }
 
       const lessons = knowledge.lessons
@@ -403,6 +514,7 @@ export class OrionPipeline extends WorkflowEntrypoint<Env, PipelineParams> {
         persistEvaluation(
           db, this.env.AI_MODEL, sig.sigKey, dossier, verdict,
           calibrationFor(verdict.confidence, knowledge.calibration), prior,
+          { weights, healthMultiplier: health?.confidenceMultiplier ?? 1 },
         ),
       );
 
@@ -455,6 +567,9 @@ export class OrionPipeline extends WorkflowEntrypoint<Env, PipelineParams> {
           done.push(s.sigKey);
           const f = featuresFromCandles(s, candles);
           if (!f) continue;
+          // metadata enriquecida (Mejora 4): régimen, tendencia, volatilidad
+          // y score IA permiten filtrar la búsqueda de similares por
+          // condiciones de mercado, no solo por cercanía del embedding
           const meta: Record<string, string | number> = {
             outcome: s.outcome,
             pattern: s.pattern,
@@ -462,15 +577,27 @@ export class OrionPipeline extends WorkflowEntrypoint<Env, PipelineParams> {
             interval: s.interval,
             direction: s.direction,
             rr: s.rr,
+            trend: f.emaSlope,
+            volatility: f.atrBucket,
           };
+          if (s.regime && s.regime !== ('UNKNOWN' as string)) {
+            meta.regime = s.regime;
+            meta.marketCondition = `${s.regime}|${f.atrBucket}`;
+          }
           if (s.aiAction) {
             meta.aiAction = s.aiAction;
             meta.aiConfidence = s.aiConfidence ?? 0;
           }
+          if (s.aiScore !== null && s.aiScore !== undefined) {
+            meta.aiScore = s.aiScore;
+          }
           cases.push({ sigKey: s.sigKey, text: caseText(f), meta });
         }
         if (cases.length > 0) {
-          const embeddings = await embedTexts(this.env.AI, cases.map((c) => c.text));
+          const embeddings = await embedTexts(
+            this.env.AI, cases.map((c) => c.text),
+            { db, kind: 'embed', sigKey: null, rates },
+          );
           cases.forEach((c, i) => {
             vectors.push({ id: c.sigKey, values: embeddings[i], metadata: c.meta });
           });
@@ -486,8 +613,49 @@ export class OrionPipeline extends WorkflowEntrypoint<Env, PipelineParams> {
       return vectors.length;
     });
 
-    // 5b. reflexión: destilar lecciones de los errores IA cerrados desde la
-    // última reflexión; un fallo aquí nunca tumba el pipeline
+    // 5b. evaluación continua (Mejora 7): clasificación determinista de
+    // cada cierre con evaluación — ¿acertó la IA? ¿funcionó el patrón?
+    // ¿el régimen acompañaba? — persistida en trade_reviews (cero IA)
+    const tradeReviews = await step.do('revisa trades cerrados', RETRY, async () => {
+      const pendingReviews = await getUnreviewedClosed(db, 120);
+      if (pendingReviews.length === 0) return 0;
+      const rows = pendingReviews.map((p) => {
+        let ctxFields: Parameters<typeof classifyTradeReview>[0]['context'] = null;
+        if (p.contextJson) {
+          try {
+            const c = JSON.parse(p.contextJson) as SignalContext;
+            ctxFields = {
+              trendHigherTf: c.trendHigherTf,
+              rsi14: c.rsi14,
+              atrPct: c.atrPct,
+              marketWarnings: c.marketWarnings ?? null,
+              session: c.session,
+            };
+          } catch { ctxFields = null; }
+        }
+        return classifyTradeReview({
+          sigKey: p.sigKey,
+          symbol: p.symbol,
+          interval: p.interval,
+          pattern: p.pattern,
+          direction: p.direction,
+          rr: p.rr,
+          outcome: p.outcome as Exclude<Outcome, 'open'>,
+          regime: p.regime && p.regime !== ('UNKNOWN' as string) ? p.regime : null,
+          aiAction: p.aiAction,
+          aiConfidence: p.aiConfidence,
+          overallScore: p.overallScore,
+          isGate: (p.model ?? '').startsWith('gate:'),
+          context: ctxFields,
+        });
+      });
+      await insertTradeReviews(db, rows);
+      return rows.length;
+    });
+
+    // 5c. reflexión: destilar lecciones de los errores IA cerrados desde la
+    // última reflexión, ahora con régimen y taxonomía de trade_reviews;
+    // un fallo aquí nunca tumba el pipeline
     let newLessons = 0;
     try {
       const cursor = await step.do('cursor de reflexión', async () =>
@@ -502,8 +670,8 @@ export class OrionPipeline extends WorkflowEntrypoint<Env, PipelineParams> {
             this.env.AI,
             this.env.AI_MODEL,
             // sin outcomeTs: es el cursor interno, no material de reflexión
-            mistakes.map(({ symbol, interval, pattern, direction, rr, aiAction, aiConfidence, aiThesis, outcome }) =>
-              ({ symbol, interval, pattern, direction, rr, aiAction, aiConfidence, aiThesis, outcome })),
+            mistakes.map(({ symbol, interval, pattern, direction, rr, aiAction, aiConfidence, aiThesis, outcome, regime, mistakeType, cause }) =>
+              ({ symbol, interval, pattern, direction, rr, aiAction, aiConfidence, aiThesis, outcome, regime, mistakeType, cause })),
             { db, kind: 'reflect', sigKey: null, rates },
           );
           if (lessons.length > 0) {
@@ -519,6 +687,37 @@ export class OrionPipeline extends WorkflowEntrypoint<Env, PipelineParams> {
       }
     } catch {
       newLessons = 0;
+    }
+
+    // 5d. evolución de pesos (Mejora 2): cuando se acumulan cierres nuevos
+    // suficientes, las dimensiones que separan ganadores de perdedores
+    // ganan peso de forma acotada y determinista (sin ML, cero IA)
+    let weightsUpdated = false;
+    try {
+      const closedCount = await step.do('cursor de pesos', RETRY, async () =>
+        countClosedEvaluated(db),
+      );
+      const lastCount = await step.do('lee cursor de pesos', async () =>
+        Number((await this.env.CACHE.get('scoring:weights_cursor')) ?? '0'),
+      );
+      if (closedCount >= 40 && closedCount - lastCount >= 25) {
+        weightsUpdated = await step.do('evolución de pesos', RETRY, async () => {
+          const rows = await getClosedBreakdowns(db, 400);
+          const parsed = rows.flatMap((r) => {
+            try {
+              return [{ breakdown: JSON.parse(r.scoresJson), outcome: r.outcome }];
+            } catch { return []; }
+          });
+          if (parsed.length < 40) return false;
+          const current = (await getScoringWeights(db))?.weights ?? DEFAULT_WEIGHTS;
+          const next = evolveWeights(current, computeDimensionPerformance(parsed));
+          await saveScoringWeights(db, next, parsed.length);
+          await this.env.CACHE.put('scoring:weights_cursor', String(closedCount));
+          return true;
+        });
+      }
+    } catch {
+      weightsUpdated = false;
     }
 
     /* ---------- Retención y resumen ---------- */
@@ -544,6 +743,10 @@ export class OrionPipeline extends WorkflowEntrypoint<Env, PipelineParams> {
           newLessons,
           paperOpened: paper.opened,
           paperClosed: paper.closed,
+          healthPatterns,
+          tradeReviews,
+          regimeBackfilled,
+          weightsUpdated: weightsUpdated ? 1 : 0,
         }),
       );
     });
@@ -551,7 +754,36 @@ export class OrionPipeline extends WorkflowEntrypoint<Env, PipelineParams> {
     return {
       ingested, newSignals, evaluated, reevaluated, topScore, indexedCases, newLessons,
       paperOpened: paper.opened, paperClosed: paper.closed, paperRejected: paper.rejected,
+      healthPatterns, tradeReviews, regimeBackfilled,
+      weightsUpdated: weightsUpdated ? 1 : 0,
     };
+  }
+
+  /** Búsqueda de casos similares: primero filtrada por marco temporal y
+      régimen (requiere metadata indexes en Vectorize); si los índices no
+      existen o los vecinos son pocos, cae a la búsqueda global clásica. */
+  private async querySimilar(
+    vector: number[],
+    interval: string,
+    regime: string | null | undefined,
+  ): Promise<{ score: number; metadata?: Record<string, unknown> | null }[]> {
+    if (regime) {
+      try {
+        const res = await this.env.VECTOR_INDEX.query(vector, {
+          topK: 8,
+          returnMetadata: 'all',
+          filter: { interval, regime },
+        });
+        if (res.matches.length >= 3) return res.matches;
+      } catch {
+        // sin metadata indexes creados aún → búsqueda global
+      }
+    }
+    const res = await this.env.VECTOR_INDEX.query(vector, {
+      topK: 8,
+      returnMetadata: 'all',
+    });
+    return res.matches;
   }
 }
 
@@ -564,8 +796,10 @@ async function persistEvaluation(
   calib: CalibrationBucket | null = null,
   /** En re-evaluaciones: conserva created_at original e incrementa la revisión. */
   prior: { createdAt: number; revision: number } | null = null,
+  /** Scoring adaptativo: pesos vigentes y multiplicador de salud del patrón. */
+  score: { weights?: ScoringWeights; healthMultiplier?: number } = {},
 ): Promise<number> {
-  const { breakdown, overall } = scoreSignal(dossier, verdict, calib);
+  const { breakdown, overall } = scoreSignal(dossier, verdict, calib, score);
   const now = Date.now();
   const revision = prior ? prior.revision + 1 : 1;
   // los descartes automáticos del gate no pasan por el prompt
@@ -576,8 +810,9 @@ async function persistEvaluation(
       .prepare(
         `INSERT OR REPLACE INTO evaluations
          (sig_key, context_json, ai_action, ai_confidence, ai_thesis, ai_risks,
-          scores_json, overall_score, model, created_at, revision, updated_at, prompt_version)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          scores_json, overall_score, model, created_at, revision, updated_at,
+          prompt_version, ai_invalidation, strategy_version)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         sigKey,
@@ -593,6 +828,8 @@ async function persistEvaluation(
         revision,
         now,
         promptVersion,
+        verdict.invalidation || null,
+        STRATEGY_VERSION,
       ),
     // historial append-only (P1-1): cada veredicto queda auditable aunque
     // evaluations solo conserve la revisión vigente
@@ -600,12 +837,13 @@ async function persistEvaluation(
       .prepare(
         `INSERT INTO evaluation_history
          (sig_key, revision, ai_action, ai_confidence, ai_thesis, ai_risks,
-          overall_score, model, prompt_version, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          overall_score, model, prompt_version, created_at, ai_invalidation)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         sigKey, revision, verdict.action, verdict.confidence,
         verdict.thesis, verdict.risks, overall, model, promptVersion, now,
+        verdict.invalidation || null,
       ),
   ]);
   return overall;

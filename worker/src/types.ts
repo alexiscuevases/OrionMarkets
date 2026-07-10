@@ -63,6 +63,9 @@ export interface DetectedSignal {
   target: number;
   rr: number;
   confidence: number; // 0-100 determinista
+  /** Régimen de mercado en el momento de la señal (regime.ts); lo anota el
+      workflow tras la detección, null si no hay muestra suficiente. */
+  regime?: import('./regime').MarketRegime | null;
 }
 
 export type Outcome = 'open' | 'tp_hit' | 'sl_hit' | 'expired';
@@ -70,6 +73,19 @@ export type Outcome = 'open' | 'tp_hit' | 'sl_hit' | 'expired';
 export interface SignalRow extends DetectedSignal {
   outcome: Outcome;
   outcomeTs: number | null;
+}
+
+/** Walk-forward del patrón de la señal (health.ts): histórico vs. reciente. */
+export interface PatternWalkForward {
+  totalTrades: number;
+  winRate: number;
+  avgRR: number;
+  expectancy: number;
+  recentTrades: number;
+  recentWinRate: number;
+  recentExpectancy: number;
+  degradationScore: number;
+  status: 'healthy' | 'degrading' | 'disabled';
 }
 
 /** Dossier determinista que se entrega a la IA (paso 3). */
@@ -104,6 +120,14 @@ export interface SignalContext {
   session?: string;
   /** Estructura Smart Money (order blocks y liquidez); null sin muestra. */
   smc?: import('./smc').SmcSummary | null;
+  /** Régimen de mercado en el corte del dossier (regime.ts). */
+  marketRegime?: import('./regime').MarketRegime | null;
+  /** Frase de régimen para la IA: estado + rendimiento del patrón en él. */
+  regimeNote?: string | null;
+  /** Walk-forward del patrón de esta señal en este mercado; null sin datos. */
+  patternWalkForward?: PatternWalkForward | null;
+  /** Rendimiento del patrón bajo el régimen actual (dimensión regime). */
+  patternRegimeStats?: { total: number; tpRate: number; avgRr: number } | null;
   /** Solo en re-evaluaciones: seguimiento de la señal desde su detección. */
   tracking?: SignalTracking | null;
 }
@@ -141,6 +165,9 @@ export interface AiVerdict {
   confidence: number; // 0-100
   thesis: string;
   risks: string;
+  /** Condiciones observables que invalidarían la tesis (opcional en el
+      modelo: los que la omiten no fuerzan reintento). */
+  invalidation: string;
   sentimentScore: number; // 0-5 valoración cualitativa de la IA
   newsScore: number;      // 0-5
 }
@@ -156,4 +183,5 @@ export interface ScoreBreakdown {
   institutional: number;
   riskReward: number;
   history: number;      // expectancia histórica real del patrón en este mercado
+  regime: number;       // encaje con el régimen de mercado (regime.ts)
 }

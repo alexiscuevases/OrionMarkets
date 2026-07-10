@@ -1,8 +1,12 @@
 import { atr, correlation, ema, returns, rsi, slopePct } from './indicators';
-import { getPatternStats, loadCandles } from './db';
+import { getPatternRegimeStats, getPatternStats, loadCandles } from './db';
+import { computePatternHealth, HEALTH_THRESHOLDS } from './health';
 import { getMarketContext } from './marketContext';
+import { describeRegime, regimeAt } from './regime';
 import { smcSummary } from './smc';
-import { SYMBOLS, type Candle, type SignalContext, type SignalRow } from './types';
+import {
+  SYMBOLS, type Candle, type PatternWalkForward, type SignalContext, type SignalRow,
+} from './types';
 
 /* Sesiones de mercado (horas UTC); espejo de SESSIONS del frontend. */
 const SESSIONS: { name: string; openUtc: number; closeUtc: number }[] = [
@@ -82,6 +86,45 @@ export async function buildContext(
   // rendimiento histórico de los patrones en este mercado (auto-referencia)
   const stats = await getPatternStats(db, signal.symbol, signal.interval);
 
+  // régimen de mercado en el corte (regime.ts, mismas velas del dossier).
+  // En re-evaluaciones se recalcula al presente: el régimen puede haber
+  // cambiado desde la detección y eso es exactamente lo que la IA debe ver
+  const regimeInfo = regimeAt(upto, upto.length - 1);
+
+  // jurisprudencia condicionada: rendimiento real del patrón bajo este
+  // régimen en este mercado (muestra mínima la aplica el consumidor)
+  const patternRegime = regimeInfo
+    ? await getPatternRegimeStats(db, signal.symbol, signal.interval, signal.pattern, regimeInfo.regime)
+    : null;
+
+  // walk-forward del patrón de la señal: histórico completo vs. ventana
+  // reciente; la degradación reduce la dimensión history y alerta a la IA
+  const sinceRecent = asOf - HEALTH_THRESHOLDS.recentWindowDays * 86_400_000;
+  const recentStats = await getPatternStats(db, signal.symbol, signal.interval, sinceRecent);
+  const full = stats.find((s) => s.pattern === signal.pattern);
+  const recent = recentStats.find((s) => s.pattern === signal.pattern);
+  let patternWalkForward: PatternWalkForward | null = null;
+  if (full && full.total > 0) {
+    const h = computePatternHealth(
+      { symbol: signal.symbol, interval: signal.interval, pattern: signal.pattern },
+      { total: full.total, tpRate: full.tpRate, avgRr: full.avgRr },
+      recent
+        ? { total: recent.total, tpRate: recent.tpRate, avgRr: recent.avgRr }
+        : { total: 0, tpRate: 0, avgRr: 0 },
+    );
+    patternWalkForward = {
+      totalTrades: h.totalTrades,
+      winRate: h.winRate,
+      avgRR: h.avgRR,
+      expectancy: h.expectancy,
+      recentTrades: h.recentTrades,
+      recentWinRate: h.recentWinRate,
+      recentExpectancy: h.recentExpectancy,
+      degradationScore: h.degradationScore,
+      status: h.status,
+    };
+  }
+
   // calendario económico (capa de contexto, Fase 5): eventos ya publicados
   // en el calendario en el momento del corte — conocidos con antelación,
   // no información futura. Sin proveedor conectado queda null (neutral).
@@ -115,6 +158,12 @@ export async function buildContext(
     marketWarnings: market.warnings.length > 0 ? market.warnings : null,
     session: openSessions(asOf),
     smc: smcSummary(upto, signal.direction),
+    marketRegime: regimeInfo?.regime ?? null,
+    regimeNote: regimeInfo
+      ? describeRegime(regimeInfo, signal.direction, patternRegime)
+      : null,
+    patternWalkForward,
+    patternRegimeStats: patternRegime,
   };
 }
 

@@ -24,8 +24,10 @@ export interface SignalAnalysis {
   conclusion: string | null;
 }
 
-/* Pesos de las dimensiones computables, espejo de WEIGHTS del motor
-   (sin news/sentiment, que son valoración cualitativa de la IA). */
+/* Pesos de las dimensiones computables, espejo de DEFAULT_WEIGHTS del motor
+   (sin news/sentiment, que son valoración cualitativa de la IA). El motor
+   puede evolucionarlos (scoring_weights), así que esta explicación es
+   aproximada; la puntuación real viaja en scores_json/overall_score. */
 const TECH_WEIGHTS: Record<string, number> = {
   trend: 1.5,
   momentum: 1.2,
@@ -35,6 +37,7 @@ const TECH_WEIGHTS: Record<string, number> = {
   institutional: 1.0,
   riskReward: 1.4,
   history: 1.3,
+  regime: 1.2,
 };
 
 export function gradeForScore(score: number): string {

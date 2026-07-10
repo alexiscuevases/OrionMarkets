@@ -64,6 +64,71 @@ export function atr(candles: Candle[], period = 14): number[] {
   return out;
 }
 
+/** ADX de Wilder con sus componentes direccionales (+DI/−DI). */
+export interface AdxResult {
+  adx: number[];
+  plusDi: number[];
+  minusDi: number[];
+}
+
+export function adx(candles: Candle[], period = 14): AdxResult {
+  const n = candles.length;
+  const out: AdxResult = {
+    adx: new Array<number>(n).fill(NaN),
+    plusDi: new Array<number>(n).fill(NaN),
+    minusDi: new Array<number>(n).fill(NaN),
+  };
+  if (n <= period * 2) return out;
+
+  // movimiento direccional y true range por vela
+  const plusDm: number[] = [0];
+  const minusDm: number[] = [0];
+  const trs: number[] = [0];
+  for (let i = 1; i < n; i++) {
+    const up = candles[i].high - candles[i - 1].high;
+    const down = candles[i - 1].low - candles[i].low;
+    plusDm.push(up > down && up > 0 ? up : 0);
+    minusDm.push(down > up && down > 0 ? down : 0);
+    const prevClose = candles[i - 1].close;
+    trs.push(Math.max(
+      candles[i].high - candles[i].low,
+      Math.abs(candles[i].high - prevClose),
+      Math.abs(candles[i].low - prevClose),
+    ));
+  }
+
+  // suavizado de Wilder de TR y DMs
+  let trS = trs.slice(1, period + 1).reduce((a, b) => a + b, 0);
+  let plusS = plusDm.slice(1, period + 1).reduce((a, b) => a + b, 0);
+  let minusS = minusDm.slice(1, period + 1).reduce((a, b) => a + b, 0);
+
+  const dxs = new Array<number>(n).fill(NaN);
+  for (let i = period; i < n; i++) {
+    if (i > period) {
+      trS = trS - trS / period + trs[i];
+      plusS = plusS - plusS / period + plusDm[i];
+      minusS = minusS - minusS / period + minusDm[i];
+    }
+    const pDi = trS === 0 ? 0 : (plusS / trS) * 100;
+    const mDi = trS === 0 ? 0 : (minusS / trS) * 100;
+    out.plusDi[i] = pDi;
+    out.minusDi[i] = mDi;
+    const sum = pDi + mDi;
+    dxs[i] = sum === 0 ? 0 : (Math.abs(pDi - mDi) / sum) * 100;
+  }
+
+  // ADX: media de Wilder del DX
+  let adxPrev = 0;
+  for (let i = period; i < period * 2; i++) adxPrev += dxs[i];
+  adxPrev /= period;
+  out.adx[period * 2 - 1] = adxPrev;
+  for (let i = period * 2; i < n; i++) {
+    adxPrev = (adxPrev * (period - 1) + dxs[i]) / period;
+    out.adx[i] = adxPrev;
+  }
+  return out;
+}
+
 export interface Swing {
   index: number;
   price: number;

@@ -22,6 +22,7 @@ Responde EXCLUSIVAMENTE con un objeto JSON válido, sin markdown, con esta forma
   "confidence": <entero 0-100>,
   "thesis": "<2-3 frases: por qué operar o no>",
   "risks": "<1-2 frases: principal riesgo de la operación>",
+  "invalidation": "<1-2 frases: condiciones OBSERVABLES que invalidarían la tesis (nivel de precio, cambio de régimen, dato macro)>",
   "sentimentScore": <entero 0-5, tu lectura del contexto/momentum>,
   "newsScore": <entero 0-5; si el dossier no trae noticias usa 3 (neutral)>
 }
@@ -43,6 +44,16 @@ Criterios:
   structuralBias "en contra" significa techo/suelo institucional inmediato:
   exige confluencia excepcional o usa "skip". La liquidez por delante en la
   dirección de la señal actúa como imán del precio y refuerza la entrada.
+- "regimeNote" y "marketRegime" describen el régimen de mercado actual
+  (TRENDING_UP/DOWN, RANGE, HIGH/LOW_VOLATILITY) con el acierto REAL del
+  patrón bajo ese régimen si hay muestra. Una señal contra el régimen
+  dominante exige confluencia excepcional; en HIGH_VOLATILITY los stops se
+  barren por ruido (más prudencia); en LOW_VOLATILITY las rupturas suelen
+  fallar por falta de recorrido.
+- "patternWalkForward" compara el rendimiento histórico del patrón con su
+  ventana reciente: status "degrading" o degradationScore alto significa
+  que el patrón está dejando de funcionar AHORA aunque su histórico sea
+  bueno — reduce confianza o usa "skip" salvo confluencia clara.
 - "session" indica las sesiones abiertas: Londres y Nueva York concentran
   el volumen; en Sídney/Tokio en solitario los patrones de ruptura pierden
   fiabilidad y merece más prudencia.
@@ -110,7 +121,7 @@ export async function evaluateSignal(
         { role: 'user', content: user },
       ],
       temperature: 0.2,
-      max_tokens: 512,
+      max_tokens: 640, // el campo "invalidation" alarga la respuesta JSON
     })) as AiTextResult;
   } catch (e) {
     if (telemetry) {
@@ -160,6 +171,7 @@ const FALLBACK: AiVerdict = {
   confidence: 0,
   thesis: 'Respuesta del modelo no parseable; se descarta por seguridad.',
   risks: 'Evaluación IA no disponible.',
+  invalidation: '',
   sentimentScore: 3,
   newsScore: 3,
 };
@@ -184,6 +196,8 @@ function tryParseVerdict(raw: string, context: SignalContext): AiVerdict | null 
       confidence: clampInt(v.confidence, 0, 100, 0),
       thesis: String(v.thesis ?? '').slice(0, 600) || FALLBACK.thesis,
       risks: String(v.risks ?? '').slice(0, 400) || FALLBACK.risks,
+      // opcional: un modelo que lo omita no convierte veredictos válidos en reintentos
+      invalidation: String(v.invalidation ?? '').slice(0, 400),
       sentimentScore: clampInt(v.sentimentScore, 0, 5, 3),
       newsScore: clampInt(v.newsScore, 0, 5, 3),
     };

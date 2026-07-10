@@ -130,13 +130,42 @@ export function featuresFromCandles(
 
 /* ---------- embeddings ---------- */
 
-/** Embeddings en lote (una sola llamada a Workers AI, hasta ~100 textos). */
-export async function embedTexts(ai: Ai, texts: string[]): Promise<number[][]> {
+/** Embeddings en lote (una sola llamada a Workers AI, hasta ~100 textos).
+    Con `telemetry` la llamada queda registrada en ai_calls (kind 'embed'). */
+export async function embedTexts(
+  ai: Ai,
+  texts: string[],
+  telemetry?: import('./ai').AiTelemetry,
+): Promise<number[][]> {
   if (texts.length === 0) return [];
-  const res = (await ai.run(EMBED_MODEL as Parameters<Ai['run']>[0], {
-    text: texts,
-  })) as { data?: number[][] };
+  const started = Date.now();
+  let res: { data?: number[][] };
+  try {
+    res = (await ai.run(EMBED_MODEL as Parameters<Ai['run']>[0], {
+      text: texts,
+    })) as { data?: number[][] };
+  } catch (e) {
+    if (telemetry) {
+      const { estimateTokens, logAiCall } = await import('./aiLog');
+      const tokensIn = estimateTokens(texts.join(' '));
+      await logAiCall(telemetry.db, {
+        kind: 'embed', model: EMBED_MODEL, promptVersion: null, sigKey: telemetry.sigKey,
+        latencyMs: Date.now() - started, tokensIn, tokensOut: 0,
+        estCostUsd: 0, success: false, error: e instanceof Error ? e.message : String(e),
+      });
+    }
+    throw e;
+  }
   const data = res.data ?? [];
+  if (telemetry) {
+    const { estimateTokens, logAiCall } = await import('./aiLog');
+    await logAiCall(telemetry.db, {
+      kind: 'embed', model: EMBED_MODEL, promptVersion: null, sigKey: telemetry.sigKey,
+      latencyMs: Date.now() - started, tokensIn: estimateTokens(texts.join(' ')),
+      tokensOut: 0, estCostUsd: 0, success: data.length === texts.length,
+      error: data.length === texts.length ? null : `esperados ${texts.length}, recibidos ${data.length}`,
+    });
+  }
   if (data.length !== texts.length) {
     throw new Error(`embeddings: esperados ${texts.length}, recibidos ${data.length}`);
   }
@@ -151,7 +180,8 @@ export interface CaseMatch {
 }
 
 /** Resume los vecinos recuperados de Vectorize en una frase para la IA.
-    null si no hay muestra suficientemente parecida. */
+    null si no hay muestra suficientemente parecida. Si la metadata trae los
+    campos enriquecidos (regime, aiScore) añade el desglose por régimen. */
 export function summarizeSimilarCases(matches: CaseMatch[], minScore = 0.72): string | null {
   const near = matches.filter((m) => m.score >= minScore && m.metadata);
   if (near.length < 3) return null;
@@ -159,18 +189,29 @@ export function summarizeSimilarCases(matches: CaseMatch[], minScore = 0.72): st
   let tp = 0;
   let sl = 0;
   let aiWrong = 0;
+  const regimeCounts = new Map<string, { tp: number; sl: number }>();
   for (const m of near) {
     const meta = m.metadata as Record<string, unknown>;
     if (meta.outcome === 'tp_hit') tp++;
     else if (meta.outcome === 'sl_hit') sl++;
     const action = meta.aiAction;
     if ((action === 'buy' || action === 'sell') && meta.outcome === 'sl_hit') aiWrong++;
+    if (typeof meta.regime === 'string' && (meta.outcome === 'tp_hit' || meta.outcome === 'sl_hit')) {
+      let rc = regimeCounts.get(meta.regime);
+      if (!rc) { rc = { tp: 0, sl: 0 }; regimeCounts.set(meta.regime, rc); }
+      if (meta.outcome === 'tp_hit') rc.tp++; else rc.sl++;
+    }
   }
   if (tp + sl < 3) return null;
 
   let s = `${near.length} casos históricos muy similares: ${tp} alcanzaron TP y ${sl} tocaron SL (acierto ${Math.round((tp / (tp + sl)) * 100)}%).`;
   if (aiWrong > 0) {
     s += ` En ${aiWrong} de ellos la IA validó la señal y acabó en SL.`;
+  }
+  if (regimeCounts.size > 0) {
+    const parts = [...regimeCounts.entries()]
+      .map(([r, c]) => `${r}: ${c.tp}/${c.tp + c.sl} TP`);
+    s += ` Por régimen — ${parts.join('; ')}.`;
   }
   return s;
 }
@@ -187,28 +228,49 @@ export interface MistakeCase {
   aiConfidence: number;
   aiThesis: string;
   outcome: string;
+  /** Régimen de mercado de la señal (regime.ts); null en filas antiguas. */
+  regime?: string | null;
+  /** Taxonomía determinista del error (review.ts), si hay review. */
+  mistakeType?: string | null;
+  cause?: string | null;
+}
+
+export interface DistilledLesson {
+  scope: string;
+  lesson: string;
+  mistakeType: string | null;
+  cause: string | null;
+  affectedPatterns: string[];
 }
 
 const REFLECT_PROMPT = `Eres el auditor de un sistema de señales de Forex. Recibes una lista de
 errores recientes de la IA evaluadora: señales que validó y acabaron en stop
-loss, o que descartó y acabaron en take profit.
+loss, o que descartó y acabaron en take profit. Cada caso puede traer
+"regime" (régimen de mercado), "mistakeType" y "cause" (clasificación
+determinista del error).
 
 Destila como máximo 5 lecciones cortas, concretas y accionables que eviten
 repetir estos errores. Cada lección debe describir una condición observable
-(patrón, mercado, RSI, volumen, tendencia, RR...) y qué hacer al respecto.
-No inventes datos que no estén en los casos. Generaliza solo con >= 3 casos
-que apunten en la misma dirección; si un error es de un mercado concreto,
-usa su scope.
+(patrón, mercado, régimen, RSI, volumen, tendencia, RR...) y qué hacer al
+respecto. No inventes datos que no estén en los casos. Generaliza solo con
+>= 3 casos que apunten en la misma dirección; si un error es de un mercado
+concreto, usa su scope.
 
 Responde EXCLUSIVAMENTE con JSON válido, sin markdown:
-{"lessons": [{"scope": "global" | "SYMBOL|interval", "lesson": "<frase imperativa <= 220 caracteres>"}]}`;
+{"lessons": [{
+  "scope": "global" | "SYMBOL|interval",
+  "lesson": "<frase imperativa <= 220 caracteres>",
+  "mistakeType": "<mistakeType dominante de los casos que la respaldan, o null>",
+  "cause": "<causa dominante, o null>",
+  "affectedPatterns": ["<patrones exactos implicados>"]
+}]}`;
 
 export async function reflectOnMistakes(
   ai: Ai,
   model: string,
   cases: MistakeCase[],
   telemetry?: import('./ai').AiTelemetry,
-): Promise<{ scope: string; lesson: string }[]> {
+): Promise<DistilledLesson[]> {
   const user = JSON.stringify(cases, null, 1);
   const started = Date.now();
   let result: { response?: unknown; usage?: { prompt_tokens?: number; completion_tokens?: number } };
@@ -253,12 +315,26 @@ export async function reflectOnMistakes(
   if (!match) return [];
 
   try {
-    const parsed = JSON.parse(match[0]) as { lessons?: { scope?: unknown; lesson?: unknown }[] };
+    const parsed = JSON.parse(match[0]) as {
+      lessons?: {
+        scope?: unknown; lesson?: unknown; mistakeType?: unknown;
+        cause?: unknown; affectedPatterns?: unknown;
+      }[];
+    };
     const valid = /^(global|[A-Z]{6}\|[a-z0-9]+)$/;
     return (parsed.lessons ?? [])
       .map((l) => ({
         scope: String(l.scope ?? 'global'),
         lesson: String(l.lesson ?? '').trim().slice(0, 240),
+        mistakeType:
+          typeof l.mistakeType === 'string' && l.mistakeType.length > 0
+            ? l.mistakeType.slice(0, 60) : null,
+        cause:
+          typeof l.cause === 'string' && l.cause.length > 0
+            ? l.cause.slice(0, 160) : null,
+        affectedPatterns: Array.isArray(l.affectedPatterns)
+          ? l.affectedPatterns.filter((p): p is string => typeof p === 'string').slice(0, 8)
+          : [],
       }))
       .filter((l) => l.lesson.length >= 20 && valid.test(l.scope))
       .slice(0, 5);

@@ -55,8 +55,13 @@ npx wrangler d1 create orion-db                 # → database_id a wrangler.jso
 npx wrangler kv namespace create CACHE          # → id a wrangler.jsonc
 npx wrangler vectorize create orion-cases --dimensions=1024 --metric=cosine
 
-# Esquema (5 migraciones)
+# Esquema (migraciones 0001-0007)
 npm run db:remote
+
+# Metadata indexes de Vectorize (búsqueda de similares filtrada por
+# marco temporal y régimen; sin ellos el worker cae a la búsqueda global)
+npx wrangler vectorize create-metadata-index orion-cases --property-name=interval --type=string
+npx wrangler vectorize create-metadata-index orion-cases --property-name=regime --type=string
 
 # Secretos
 npx wrangler secret put TWELVEDATA_API_KEY
@@ -64,6 +69,22 @@ npx wrangler secret put ADMIN_API_KEY           # openssl rand -hex 32
 
 npm run deploy
 ```
+
+**Actualización a la 0007 (plataforma cuant) en un despliegue existente**:
+`npm run db:remote`, crear los dos metadata indexes de arriba y, si se
+quiere que los casos ya indexados en Vectorize lleven la metadata nueva
+(regime/trend/volatility/aiScore) y respondan a los filtros, re-indexarlos:
+
+```sql
+-- el pipeline los re-embebe a razón de 80 por run, sin coste de LLM
+UPDATE signals SET indexed_at = NULL WHERE outcome IN ('tp_hit', 'sl_hit');
+```
+
+El régimen de las señales históricas se backfillea solo (300 por mercado y
+run). Los pesos de scoring evolucionan cuando se acumulan >= 40 cierres
+evaluados (y luego cada 25 nuevos); hasta entonces rigen los DEFAULT_WEIGHTS
+de `scoring.ts`. `GET /api/patterns/health` expone salud por patrón y pesos
+vigentes.
 
 Desarrollo local: copiar `worker/.dev.vars.example` → `.dev.vars`,
 `npm run db:local`, `npm run dev` (worker) y `npm run dev` (frontend con
@@ -96,7 +117,8 @@ Endpoints públicos (**rate limit 120 req/min/IP**):
 | `GET /api/audit?sigKey=` | Auditoría de una señal: historial de veredictos + llamadas IA |
 | `GET /api/opportunities` | Mejores señales abiertas puntuadas |
 | `GET /api/strategies?days=` | Rendimiento real por patrón |
-| `GET /api/market-state` | Tendencia/volatilidad/RSI por símbolo + próximo evento macro |
+| `GET /api/market-state` | Régimen (ADX)/tendencia/volatilidad/RSI por símbolo + próximo evento macro |
+| `GET /api/patterns/health` | Salud walk-forward por patrón + pesos de scoring vigentes |
 | `GET /api/events?symbol=` | Calendario económico próximo |
 | `GET /api/learning` | Lecciones, calibración IA, progreso de memoria |
 | `GET /api/risk/position-size?symbol=&balance=&riskPct=&entry=&stop=` | Cálculo de tamaño de posición |
