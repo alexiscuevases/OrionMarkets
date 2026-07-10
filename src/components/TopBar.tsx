@@ -2,9 +2,15 @@ import { useEffect, useState } from 'react';
 import { useAuth } from '../auth/useAuth';
 import { SESSIONS, isSessionOpen } from '../data/market';
 import { useEngineStatus } from '../hooks/useMarketData';
-import { BellIcon, GearIcon, LogoutIcon, OrionMark, SparkleIcon } from './icons';
+import { BellIcon, GearIcon, LogoutIcon, OrionMark, ShieldIcon, SparkleIcon } from './icons';
 
-export default function TopBar() {
+interface Props {
+  /** Vista admin activa; undefined cuando el usuario no es admin. */
+  adminOpen?: boolean;
+  onToggleAdmin?: () => void;
+}
+
+export default function TopBar({ adminOpen, onToggleAdmin }: Props) {
   const [now, setNow] = useState(() => new Date());
   const engine = useEngineStatus();
   const { user, logout } = useAuth();
@@ -46,6 +52,16 @@ export default function TopBar() {
       </div>
 
       <div className="topbar__actions">
+        {user.role === 'admin' && onToggleAdmin && (
+          <button
+            className={`admin-pill ${adminOpen ? 'admin-pill--on' : ''}`}
+            title={adminOpen ? 'Volver al terminal' : 'Panel de administración'}
+            onClick={onToggleAdmin}
+          >
+            <ShieldIcon size={13} />
+            <span>Admin</span>
+          </button>
+        )}
         <div className="ai-pill">
           <SparkleIcon size={13} />
           <span>Orion AI</span>

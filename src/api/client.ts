@@ -5,6 +5,11 @@ export const API_BASE: string =
   import.meta.env.VITE_API_URL ?? 'https://orion-markets-worker.alexcuevas.workers.dev';
 
 const TIMEOUT_MS = 8000;
+/* El login/registro deriva la contraseña (PBKDF2) y puede coincidir con un
+   arranque frío del worker (sobre todo en local); margen más generoso. */
+const AUTH_TIMEOUT_MS = 20_000;
+/* Un backtest recorre hasta 50k velas con todos los detectores. */
+const BACKTEST_TIMEOUT_MS = 60_000;
 
 /* ---------- sesión (auth con D1 en el worker) ---------- */
 
@@ -31,7 +36,11 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...init.headers,
     },
-    signal: AbortSignal.timeout(TIMEOUT_MS),
+    signal: AbortSignal.timeout(
+      path.startsWith('/api/auth/') ? AUTH_TIMEOUT_MS
+      : path === '/api/backtest' ? BACKTEST_TIMEOUT_MS
+      : TIMEOUT_MS,
+    ),
   });
   if (res.status === 401 && !path.startsWith('/api/auth/')) {
     // sesión inválida: se limpia y la AuthGate vuelve a pedir login
@@ -158,6 +167,238 @@ export interface ApiStrategies {
   closed: ApiClosedTrade[];
 }
 
+/* ---------- administración (rol admin o ADMIN_API_KEY) ---------- */
+
+/** Fila de pipeline_runs con contadores del run (observe.ts). */
+export interface ApiRunSummary {
+  id: string;
+  trigger: string;
+  startedAt: number;
+  finishedAt: number | null;
+  durationMs: number | null;
+  status: 'running' | 'success' | 'error' | 'skipped' | string;
+  error: string | null;
+  counters: Record<string, number> | null;
+}
+
+export interface ApiAiUsage {
+  calls: number;
+  errors: number;
+  tokensIn: number;
+  tokensOut: number;
+  estCostUsd: number;
+  avgLatencyMs: number | null;
+  byKind: { kind: string; calls: number; errors: number; estCostUsd: number }[];
+}
+
+export interface ApiFreshness {
+  symbol: string;
+  interval: string;
+  lastCandleTs: number | null;
+  ageMs: number | null;
+  stale: boolean;
+}
+
+/** Informe completo de /api/health (healthReport del worker). */
+export interface ApiHealthReport {
+  ok: boolean;
+  generatedAt: number;
+  universe: { symbols: string[]; intervals: string[] };
+  lastRun: Record<string, unknown> | null;
+  pipeline: {
+    ok: boolean;
+    lastSuccess: ApiRunSummary | null;
+    lastError: ApiRunSummary | null;
+    recentRuns: ApiRunSummary[];
+  };
+  data: {
+    ok: boolean;
+    staleMarkets: ApiFreshness[];
+    freshness: ApiFreshness[];
+    openSignals: number;
+  };
+  ai: { ok: boolean; last24h: ApiAiUsage };
+  vector: { indexed: number; totalClosed: number };
+}
+
+export interface ApiAdminMetrics {
+  health: ApiHealthReport;
+  ai7d: ApiAiUsage;
+  tables: Record<string, number>;
+  recentBacktests: {
+    id: string;
+    createdAt: number;
+    symbol: string;
+    interval: string;
+    trades: number;
+    detectorVersion: string;
+  }[];
+  versions: { detector: string; prompt: string; strategy: string; model: string };
+}
+
+export interface ApiBacktestRequest {
+  symbol: string;
+  interval: string;
+  from: string | number;
+  to: string | number;
+  patterns?: string[];
+  minConfidence?: number;
+  initialBalance?: number;
+  riskPct?: number;
+}
+
+export interface ApiBacktestTrade {
+  ts: number;
+  pattern: string;
+  direction: 'buy' | 'sell';
+  entry: number;
+  stop: number;
+  target: number;
+  rr: number;
+  confidence: number;
+  outcome: 'tp_hit' | 'sl_hit' | 'expired';
+  outcomeTs: number;
+  r: number;
+}
+
+export interface ApiPatternPerf {
+  pattern: string;
+  trades: number;
+  wins: number;
+  losses: number;
+  expired: number;
+  winRate: number | null;
+  netR: number;
+  expectancyR: number | null;
+}
+
+export interface ApiBacktestMetrics {
+  totalTrades: number;
+  wins: number;
+  losses: number;
+  expired: number;
+  openAtEnd: number;
+  winRate: number | null;
+  profitFactor: number | null;
+  expectancyR: number | null;
+  avgRr: number | null;
+  netR: number;
+  maxDrawdownR: number;
+  maxDrawdownPct: number;
+  finalBalance: number;
+  returnPct: number;
+  equityCurve: { ts: number; r: number; balance: number }[];
+  monthly: { month: string; trades: number; wins: number; losses: number; netR: number }[];
+  byPattern: ApiPatternPerf[];
+  bestPattern: string | null;
+  worstPattern: string | null;
+}
+
+export interface ApiBacktestResult {
+  id: string;
+  symbol: string;
+  interval: string;
+  fromTs: number;
+  toTs: number;
+  detectorVersion: string;
+  params: {
+    initialBalance: number;
+    riskPct: number;
+    minConfidence: number;
+    patterns?: string[];
+  };
+  candlesUsed?: number;
+  metrics: ApiBacktestMetrics;
+  /** Solo en la respuesta de POST /api/backtest; los guardados no los conservan. */
+  trades?: ApiBacktestTrade[];
+}
+
+/** Backtest guardado en D1: sin lista de trades (la columna es su recuento). */
+export type ApiBacktestStored = Omit<ApiBacktestResult, 'trades'> & { trades: number };
+
+export interface ApiBacktestSummary {
+  id: string;
+  createdAt: number;
+  symbol: string;
+  interval: string;
+  fromTs: number;
+  toTs: number;
+  trades: number;
+  detectorVersion: string;
+  paramsJson: string;
+}
+
+export interface ApiPaperAccount {
+  id: number;
+  name: string;
+  initialBalance: number;
+  balance: number;
+  riskPct: number;
+  minScore: number;
+  maxOpenPositions: number;
+  maxTotalRiskPct: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ApiPaperPosition {
+  sigKey: string;
+  symbol: string;
+  interval: string;
+  direction: 'buy' | 'sell';
+  entry: number;
+  stop: number;
+  target: number;
+  units: number;
+  lots: number;
+  riskAmount: number;
+  riskPct: number;
+  openedAt: number;
+}
+
+export interface ApiPaperTrade {
+  sigKey?: string;
+  symbol: string;
+  interval: string;
+  direction: 'buy' | 'sell';
+  pattern: string;
+  entry: number;
+  exitPrice: number;
+  plAmount: number;
+  plR: number;
+  outcome: string;
+  openedAt: number;
+  closedAt: number;
+  balanceAfter: number;
+}
+
+export interface ApiPaperSummary {
+  account: ApiPaperAccount;
+  openPositions: ApiPaperPosition[];
+  stats: {
+    totalTrades: number;
+    wins: number;
+    losses: number;
+    expired: number;
+    winRate: number | null;
+    netPl: number;
+    netR: number;
+    maxDrawdownPct: number;
+    returnPct: number;
+  };
+  equityCurve: { ts: number; balance: number }[];
+}
+
+export interface ApiMarketEvent {
+  ts: number;
+  currency: string;
+  impact: 'high' | 'medium' | 'low' | string;
+  title: string;
+  actual: string | null;
+  forecast: string | null;
+  previous: string | null;
+}
+
 export const api = {
   login: (email: string, password: string) =>
     post<ApiSession>('/api/auth/login', { email, password }),
@@ -190,4 +431,29 @@ export const api = {
     get<{ states: ApiMarketState[]; generatedAt: number }>('/api/market-state'),
 
   learning: () => get<{ calibration: ApiCalibrationBucket[] }>('/api/learning'),
+
+  /* --- administración: la sesión debe ser de un usuario con rol admin --- */
+
+  adminMetrics: () => get<ApiAdminMetrics>('/api/admin/metrics'),
+
+  pipelineRuns: (limit = 30) => get<{ runs: ApiRunSummary[] }>(`/api/runs?limit=${limit}`),
+
+  triggerRun: () => post<{ id: string; status: unknown }>('/api/run'),
+
+  runBacktest: (params: ApiBacktestRequest) =>
+    post<ApiBacktestResult>('/api/backtest', params),
+
+  backtests: () => get<{ backtests: ApiBacktestSummary[] }>('/api/backtests'),
+
+  backtest: (id: string) => get<ApiBacktestStored>(`/api/backtests/${id}`),
+
+  paperAccount: () => get<ApiPaperSummary>('/api/paper/account'),
+
+  paperReset: (body: { initialBalance?: number; riskPct?: number; minScore?: number }) =>
+    post<{ ok: boolean }>('/api/paper/reset', body),
+
+  events: () => get<{ events: ApiMarketEvent[] }>('/api/events'),
+
+  uploadEvents: (events: unknown[]) =>
+    post<{ ok: boolean; received: number; upserted: number }>('/api/admin/events', { events }),
 };

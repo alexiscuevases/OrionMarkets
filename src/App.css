@@ -1450,3 +1450,362 @@
 }
 
 .auth__switch:hover { color: var(--ink-mid); }
+
+/* ============ panel de administración ============ */
+
+.admin {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.admin__tabs {
+  flex: none;
+  display: flex;
+  gap: 4px;
+  padding: 0 18px;
+  border-bottom: 1px solid var(--line-hair);
+  background: rgba(16, 21, 31, 0.5);
+}
+
+.admin__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 18px;
+}
+
+.admin__stack {
+  max-width: 1100px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.admin__row-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.admin__actions {
+  display: inline-flex;
+  gap: 8px;
+}
+
+.admin__h {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink-hi);
+}
+
+.admin__h4 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-mid);
+}
+
+.admin__h5 {
+  margin-bottom: 6px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-low);
+}
+
+.admin__note {
+  font-size: 11.5px;
+  color: var(--ink-mid);
+}
+
+.admin__note code {
+  font-family: var(--font-data);
+  font-size: 10.5px;
+  color: var(--ink-hi);
+}
+
+.admin__note--error { color: var(--sell-ink); }
+
+.admin__cols {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 14px;
+  align-items: start;
+}
+
+/* Tarjeta genérica del panel */
+.admin-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  background: var(--bg-panel);
+  border: 1px solid var(--line-hair);
+  border-radius: var(--r-md);
+  min-width: 0;
+}
+
+/* Semáforo de salud */
+.acard-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 10px;
+}
+
+.acard {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  background: var(--bg-panel);
+  border: 1px solid var(--line-hair);
+  border-radius: var(--r-md);
+}
+
+.acard b {
+  display: block;
+  font-size: 12px;
+  color: var(--ink-hi);
+}
+
+.acard p {
+  margin-top: 2px;
+  font-size: 10.5px;
+  color: var(--ink-low);
+}
+
+.acard__dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  margin-top: 4px;
+  border-radius: 50%;
+}
+
+.acard--ok .acard__dot { background: var(--buy-ink); box-shadow: 0 0 6px var(--buy-ink); }
+.acard--bad { border-color: rgba(229, 72, 77, 0.35); }
+.acard--bad .acard__dot { background: var(--sell-ink); box-shadow: 0 0 6px var(--sell-ink); }
+
+/* Lista clave→valor (versiones, uso IA, tablas) */
+.kv-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.kv-list > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 3px 0;
+  border-bottom: 1px solid rgba(148, 170, 210, 0.05);
+}
+
+.kv-list dt { font-size: 11px; color: var(--ink-low); }
+.kv-list dd { font-size: 11px; color: var(--ink-hi); }
+
+/* Tablas con scroll propio */
+.admin-table-wrap {
+  max-height: 320px;
+  overflow: auto;
+  border: 1px solid var(--line-hair);
+  border-radius: var(--r-sm);
+}
+
+.admin-table-wrap--tall { max-height: 420px; }
+
+.admin-cell--wide {
+  white-space: normal;
+  min-width: 240px;
+  max-width: 480px;
+}
+
+/* Formularios */
+.admin-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: flex-end;
+}
+
+.admin-form--col {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.afield {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 10.5px;
+  color: var(--ink-mid);
+  min-width: 130px;
+}
+
+.afield--wide { flex: 1; min-width: 260px; }
+
+.afield input,
+.afield select {
+  padding: 7px 9px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--ink-hi);
+  background: var(--bg-inset);
+  border: 1px solid var(--line-hair);
+  border-radius: 7px;
+  outline: none;
+  color-scheme: dark;
+}
+
+.afield input:focus,
+.afield select:focus {
+  border-color: var(--star-dim);
+  box-shadow: 0 0 0 2px var(--star-glow);
+}
+
+.admin-btn {
+  padding: 8px 14px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--bg-void);
+  background: var(--star);
+  border: none;
+  border-radius: 7px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.admin-btn:hover { filter: brightness(1.08); }
+.admin-btn:disabled { opacity: 0.55; cursor: default; }
+
+.admin-btn--danger {
+  color: #fff;
+  background: var(--sell);
+}
+
+.admin-json {
+  width: 100%;
+  padding: 10px 12px;
+  font-family: var(--font-data);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--ink-hi);
+  background: var(--bg-inset);
+  border: 1px solid var(--line-hair);
+  border-radius: 7px;
+  outline: none;
+  resize: vertical;
+}
+
+.admin-json:focus {
+  border-color: var(--star-dim);
+  box-shadow: 0 0 0 2px var(--star-glow);
+}
+
+/* Métricas de backtest / paper */
+.bt-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+  gap: 10px;
+}
+
+.bt-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  background: var(--bg-raised);
+  border: 1px solid var(--line-hair);
+  border-radius: var(--r-sm);
+  min-width: 0;
+}
+
+.bt-stat label {
+  font-size: 9px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--ink-low);
+}
+
+.bt-stat b {
+  font-size: 14.5px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bt-stat span { font-size: 9.5px; color: var(--ink-low); }
+
+/* Curva de equity */
+.equity-chart {
+  position: relative;
+  border: 1px solid var(--line-hair);
+  border-radius: var(--r-sm);
+  background: var(--bg-panel);
+  padding: 4px;
+}
+
+.equity-chart svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.equity-chart--empty {
+  padding: 28px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--ink-low);
+}
+
+.equity-chart__hi,
+.equity-chart__lo,
+.equity-chart__t0,
+.equity-chart__t1 {
+  position: absolute;
+  font-size: 9px;
+  color: var(--ink-low);
+  pointer-events: none;
+}
+
+.equity-chart__hi { top: 8px; left: 10px; }
+.equity-chart__lo { bottom: 22px; left: 10px; }
+.equity-chart__t0 { bottom: 6px; left: 10px; }
+.equity-chart__t1 { bottom: 6px; right: 10px; }
+
+/* Botón Admin en la barra superior */
+.admin-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 11px;
+  border-radius: 99px;
+  border: 1px solid var(--line-hair);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink-mid);
+}
+
+.admin-pill:hover {
+  color: var(--ink-hi);
+  border-color: var(--line-strong);
+  background: var(--bg-hover);
+}
+
+.admin-pill--on {
+  color: var(--star);
+  border-color: rgba(240, 180, 41, 0.4);
+  background: var(--star-glow);
+}

@@ -124,6 +124,14 @@ export const ArrowDown = ({ size, ...p }: P) => (
   </svg>
 );
 
+/** Panel de administración: escudo con la estrella central del cinturón. */
+export const ShieldIcon = ({ size, ...p }: P) => (
+  <svg {...base(size)} {...p}>
+    <path d="M8 1.8 13 3.6v4.2c0 3.2-2 5.4-5 6.4-3-1-5-3.2-5-6.4V3.6L8 1.8Z" />
+    <circle cx="8" cy="7.2" r="1.6" />
+  </svg>
+);
+
 export const ChevronDown = ({ size, ...p }: P) => (
   <svg {...base(size)} {...p}>
     <path d="m4 6 4 4 4-4" />

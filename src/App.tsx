@@ -5,17 +5,22 @@ import ChartPanel from './components/ChartPanel';
 import SidePanel from './components/SidePanel';
 import BottomPanel from './components/BottomPanel';
 import SignalAnalysis from './components/SignalAnalysis';
+import AdminDashboard from './components/admin/AdminDashboard';
+import { useAuth } from './auth/useAuth';
 import { useMarketData, useOpportunities, useStrategies } from './hooks/useMarketData';
 import { isSignalEnabled, strategyIdForPattern } from './data/strategies';
 import type { AISignal } from './data/market';
 import './App.css';
 
 export default function App() {
+  const { user } = useAuth();
   const [symbol, setSymbol] = useState('EURUSD');
   const [tf, setTf] = useState('H1');
   const [activeSignal, setActiveSignal] = useState<AISignal | null>(null);
   // señal cuyo análisis IA se está viendo en el modal
   const [analysisSignal, setAnalysisSignal] = useState<AISignal | null>(null);
+  // panel de administración (solo rol admin) en lugar del terminal
+  const [adminOpen, setAdminOpen] = useState(false);
 
   // catálogo de estrategias (una por detector del motor) con stats reales;
   // el interruptor de cada una decide qué señales se muestran en la UI
@@ -72,9 +77,23 @@ export default function App() {
     setActiveSignal(null);
   };
 
+  const isAdmin = user.role === 'admin';
+
+  if (isAdmin && adminOpen) {
+    return (
+      <div className="app">
+        <TopBar adminOpen onToggleAdmin={() => setAdminOpen(false)} />
+        <AdminDashboard />
+      </div>
+    );
+  }
+
   return (
     <div className="app">
-      <TopBar />
+      <TopBar
+        adminOpen={false}
+        onToggleAdmin={isAdmin ? () => setAdminOpen(true) : undefined}
+      />
       <main className="workspace">
         <Watchlist selected={symbol} onSelect={changeSymbol} />
         <ChartPanel
