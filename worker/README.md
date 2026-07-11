@@ -85,6 +85,8 @@ Monitorización: `npm run tail`, o el panel de Workflows en el dashboard
 | Variable             | Dónde  | Uso                                                   |
 | -------------------- | ------ | ----------------------------------------------------- |
 | `TWELVEDATA_API_KEY` | secret | API key de Twelve Data                                |
+| `TWELVEDATA_PLAN`    | vars   | plan de Twelve Data: `free`\|`grow`\|`pro`\|`expert`\|`enterprise`; marca ritmo y páginas de ingesta (`src/plans.ts`) |
+| `CLOUDFLARE_WORKERS_PLAN` | vars | plan de Workers: `free`\|`paid`; en `free` se minimizan los puts de KV (1000/día) |
 | `AI_MODEL`           | vars   | modelo de Workers AI (por defecto llama-3.3-70b fp8)  |
 | `AI_MIN_CONFIDENCE`  | vars   | confianza determinista mínima para activar la IA (65) |
 | `AI_MAX_PER_RUN`     | vars   | señales evaluadas por IA por ejecución (8)            |

@@ -1,3 +1,4 @@
+import { workersLimits } from './plans';
 import type { Env } from './types';
 
 /* Seguridad y utilidades HTTP (Fase 8).
@@ -7,10 +8,14 @@ import type { Env } from './types';
    - Auth de administración: Authorization: Bearer <ADMIN_API_KEY> para
      endpoints mutantes/caros. Sin el secret configurado, esos endpoints
      devuelven 503 (cerrado por defecto, nunca abierto por accidente).
-   - Rate limiting por IP en KV: ventana fija de 60 s. get+put no es
-     atómico — con ráfagas concurrentes puede dejar pasar alguna petición
-     de más; suficiente contra abuso, no contra un ataque dirigido
-     (mitigación completa: Durable Objects o WAF, documentado en P2). */
+   - Rate limiting por IP: ventana fija de 60 s. Contador en memoria del
+     isolate como primera línea (0 escrituras KV) y KV como registro
+     compartido entre isolates — pero en el plan free de Workers cada put
+     cuenta contra 1000/día, así que solo las rutas críticas (login) pagan
+     KV; el resto va solo en memoria (plans.ts). get+put no es atómico —
+     con ráfagas concurrentes puede dejar pasar alguna petición de más;
+     suficiente contra abuso, no contra un ataque dirigido (mitigación
+     completa: Durable Objects o WAF, documentado en P2). */
 
 export function corsHeaders(request: Request, env: Env): Record<string, string> {
   const allowed = (env.ALLOWED_ORIGINS ?? '*').trim();
@@ -83,23 +88,49 @@ export interface RateLimitResult {
   limit: number;
 }
 
+/** Contadores por isolate: subcuentan frente al total real (varios
+    isolates/colos), así que solo sirven para bloquear, nunca para dar por
+    libre a quien KV marcaría como excedido. */
+const memWindows = new Map<string, { window: number; count: number }>();
+
 /**
  * Ventana fija de 60 s por clave (IP + clase de ruta). Falla en abierto:
  * si KV no responde, la petición pasa — antes disponibilidad que un 500
  * por culpa del limitador.
+ *
+ * `critical: true` fuerza el registro en KV (precisión entre isolates)
+ * incluso en el plan free de Workers; reservado para rutas de bajo
+ * volumen donde el límite es de seguridad (login/registro).
  */
 export async function rateLimit(
-  kv: KVNamespace,
+  env: Env,
   key: string,
   limit: number,
+  opts: { critical?: boolean } = {},
 ): Promise<RateLimitResult> {
   const window = Math.floor(Date.now() / 60_000);
+
+  // poda perezosa: las ventanas pasadas ya no cuentan
+  if (memWindows.size > 5000) {
+    for (const [k, v] of memWindows) if (v.window !== window) memWindows.delete(k);
+  }
+  const mem = memWindows.get(key);
+  const memCount = mem?.window === window ? mem.count : 0;
+  if (memCount >= limit) return { allowed: false, remaining: 0, limit };
+  memWindows.set(key, { window, count: memCount + 1 });
+
+  // plan free de Workers: los puts de KV son escasos (1000/día) — las rutas
+  // no críticas se conforman con el contador en memoria
+  if (workersLimits(env).kvWritesScarce && !opts.critical) {
+    return { allowed: true, remaining: limit - memCount - 1, limit };
+  }
+
   const kvKey = `rl:${key}:${window}`;
   try {
-    const current = Number((await kv.get(kvKey)) ?? '0');
+    const current = Number((await env.CACHE.get(kvKey)) ?? '0');
     if (current >= limit) return { allowed: false, remaining: 0, limit };
     // TTL mínimo de KV = 60 s; 120 cubre la ventana con margen
-    await kv.put(kvKey, String(current + 1), { expirationTtl: 120 });
+    await env.CACHE.put(kvKey, String(current + 1), { expirationTtl: 120 });
     return { allowed: true, remaining: limit - current - 1, limit };
   } catch {
     return { allowed: true, remaining: limit, limit };

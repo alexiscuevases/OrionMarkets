@@ -198,7 +198,9 @@ export async function handleAuth(
   const isRegister = pathname === '/api/auth/register' && request.method === 'POST';
   if (!isLogin && !isRegister) return json({ error: 'ruta no encontrada' }, 404);
 
-  const rl = await rateLimit(env.CACHE, `${clientIp(request)}:auth`, AUTH_RATE_LIMIT);
+  // critical: login/registro mantienen el registro KV entre isolates incluso
+  // en plan free (bajo volumen y el límite aquí es de seguridad)
+  const rl = await rateLimit(env, `${clientIp(request)}:auth`, AUTH_RATE_LIMIT, { critical: true });
   if (!rl.allowed) {
     return jsonWith(cors, { error: 'demasiados intentos; espera un minuto' }, 429, { 'Retry-After': '60' });
   }

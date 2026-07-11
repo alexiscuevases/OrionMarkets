@@ -14,6 +14,7 @@ import {
   updateSignalRegimes, upsertCandles, upsertPatternHealth,
   type PatternHealthRow,
 } from './db';
+import { twelveDataLimits } from './plans';
 import { fetchSeries } from './twelvedata';
 import { detectAll, profileFor, resolveOutcome } from './patterns';
 import { buildContext } from './enrich';
@@ -51,7 +52,7 @@ export interface PipelineParams {
    reintentos por paso y estado persistido):
 
    1. INGESTA      Twelve Data → D1 (incremental por símbolo+intervalo,
-                   espaciado para respetar 8 créditos/min del plan free)
+                   espaciado según los créditos/min de TWELVEDATA_PLAN)
    2. DETECCIÓN    algoritmos deterministas sobre TODO el histórico
                    + resolución de resultados de señales abiertas (TP/SL)
    3. IA           dossier + gate por expectancia + memoria de casos
@@ -122,12 +123,15 @@ export class OrionPipeline extends WorkflowEntrypoint<Env, PipelineParams> {
 
     /* ---------- FASE 1 · Ingesta ---------- */
 
+    // ritmo y profundidad de la ingesta según TWELVEDATA_PLAN (plans.ts)
+    const td = twelveDataLimits(this.env);
+
     let ingested = 0;
     for (const symbol of SYMBOLS) {
       for (const interval of intervals) {
-        // hasta 2 páginas por combinación y ejecución: el backfill desde
+        // páginas acotadas por combinación y ejecución: el backfill desde
         // HISTORY_START converge en pocas horas sin agotar la cuota diaria
-        for (const page of [1, 2] as const) {
+        for (let page = 1; page <= td.maxPagesPerCombo; page++) {
           const res = await step.do(
             `ingesta ${symbol} ${interval} p${page}`,
             RETRY,
@@ -164,8 +168,11 @@ export class OrionPipeline extends WorkflowEntrypoint<Env, PipelineParams> {
           );
           ingested += res.count;
 
-          // rate limit del plan free: ~6,6 req/min con 9 s entre peticiones
-          await step.sleep(`rate limit tras ${symbol} ${interval} p${page}`, '9 seconds');
+          // espaciado según los créditos/min del plan (free: 9 s ≈ 6,6 req/min)
+          await step.sleep(
+            `rate limit tras ${symbol} ${interval} p${page}`,
+            `${td.sleepSeconds} seconds`,
+          );
           if (!res.hasMore) break;
         }
       }

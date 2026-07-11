@@ -4,8 +4,8 @@ import { INTERVAL_MS, type Candle, type Interval } from './types';
    Nota de comportamiento: time_series devuelve las velas MÁS RECIENTES del
    rango pedido, así que la paginación del backfill se hace con ventanas
    [start_date, end_date] de tamaño <= outputsize velas — nunca con
-   start_date abierto. Plan gratuito: 8 créditos/min y 800/día; el workflow
-   espacia las peticiones con step.sleep. */
+   start_date abierto. El workflow espacia las peticiones con step.sleep
+   según los créditos/min de TWELVEDATA_PLAN (plans.ts). */
 
 const BASE = 'https://api.twelvedata.com';
 export const MAX_OUTPUT = 5000; // límite de outputsize por petición

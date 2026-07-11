@@ -5,6 +5,12 @@ export interface Env {
   VECTOR_INDEX: Vectorize;
   PIPELINE: Workflow;
   TWELVEDATA_API_KEY: string;
+  /** Plan contratado en Twelve Data (free | grow | pro | expert | enterprise);
+      dimensiona el ritmo y profundidad de la ingesta (plans.ts). */
+  TWELVEDATA_PLAN?: string;
+  /** Plan de Cloudflare Workers (free | paid); en free se minimizan las
+      escrituras de KV para no agotar las 1000/día (plans.ts). */
+  CLOUDFLARE_WORKERS_PLAN?: string;
   /** Secret: Bearer token de los endpoints de administración (Fase 8). */
   ADMIN_API_KEY?: string;
   /** "true" permite registrarse a más usuarios tras el primero (que es admin). */

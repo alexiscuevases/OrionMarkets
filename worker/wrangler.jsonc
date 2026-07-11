@@ -46,6 +46,16 @@
   ],
 
   "vars": {
+    // Planes contratados: dimensionan los límites del sistema (src/plans.ts).
+    // TWELVEDATA_PLAN: free | grow | pro | expert | enterprise — marca el
+    // ritmo de la ingesta (free: 8 créditos/min y 800/día → 9 s entre
+    // peticiones y 2 páginas de backfill por mercado y ejecución)
+    "TWELVEDATA_PLAN": "free",
+    // CLOUDFLARE_WORKERS_PLAN: free | paid — en free cada put de KV cuenta
+    // contra 1000/día: el rate limit público pasa a memoria y las cachés
+    // de /api/health y /api/market-state alargan su TTL; con paid se
+    // recuperan la precisión entre isolates y la frescura completas
+    "CLOUDFLARE_WORKERS_PLAN": "free",
     // Modelo de Workers AI para la evaluación de señales
     "AI_MODEL": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
     // Confianza mínima (0-100) del patrón determinista para activar la IA

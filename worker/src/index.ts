@@ -12,6 +12,7 @@ import { DEFAULT_WEIGHTS } from './scoring';
 import { parseEvents, upsertEvents } from './marketContext';
 import { healthReport, recentRuns, recordRunSkipped } from './observe';
 import { accountSummary, DEFAULT_ACCOUNT_ID, resetAccount } from './paper';
+import { workersLimits } from './plans';
 import { positionSize } from './risk';
 import { DETECTOR_VERSION, PROMPT_VERSION, STRATEGY_VERSION } from './versions';
 import { PIPELINE_LOCK_KEY } from './workflow';
@@ -231,19 +232,22 @@ export default {
 
       /* ================= API pública (rate-limited) ================= */
 
-      const rl = await rateLimit(env.CACHE, `${clientIp(request)}:public`, PUBLIC_RATE_LIMIT);
+      const rl = await rateLimit(env, `${clientIp(request)}:public`, PUBLIC_RATE_LIMIT);
       if (!rl.allowed) {
         return jsonWith(cors, { error: 'demasiadas peticiones; inténtalo en un minuto' }, 429, {
           'Retry-After': '60',
         });
       }
 
-      /* --- salud del sistema (Fase 7), cacheada 60 s --- */
+      /* --- salud del sistema (Fase 7), cacheada según plan (plans.ts) --- */
       if (pathname === '/api/health') {
         const cached = await env.CACHE.get('health:report', 'json');
         if (cached) return json(cached);
         const report = await healthReport(env);
-        await env.CACHE.put('health:report', JSON.stringify(report), { expirationTtl: 60 });
+        // si el put falla (p. ej. cuota diaria de KV agotada) se sirve igual
+        await env.CACHE.put('health:report', JSON.stringify(report), {
+          expirationTtl: workersLimits(env).healthCacheTtl,
+        }).catch(() => {});
         return json(report);
       }
 
@@ -439,7 +443,10 @@ export default {
         }
 
         const payload = { states, generatedAt: Date.now() };
-        await env.CACHE.put('market:state', JSON.stringify(payload), { expirationTtl: 300 });
+        // si el put falla (p. ej. cuota diaria de KV agotada) se sirve igual
+        await env.CACHE.put('market:state', JSON.stringify(payload), {
+          expirationTtl: workersLimits(env).marketStateCacheTtl,
+        }).catch(() => {});
         return json(payload);
       }
 
