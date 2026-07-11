@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import TopBar from './components/TopBar';
 import Watchlist from './components/Watchlist';
 import ChartPanel from './components/ChartPanel';
@@ -7,6 +7,8 @@ import BottomPanel from './components/BottomPanel';
 import SignalAnalysis from './components/SignalAnalysis';
 import AdminDashboard from './components/admin/AdminDashboard';
 import { useAuth } from './auth/useAuth';
+import { useRoute } from './hooks/useRoute';
+import { useTheme } from './theme';
 import { useMarketData, useOpportunities, useStrategies } from './hooks/useMarketData';
 import { isSignalEnabled, strategyIdForPattern } from './data/strategies';
 import type { AISignal } from './data/market';
@@ -14,13 +16,22 @@ import './App.css';
 
 export default function App() {
   const { user } = useAuth();
+  const { path, navigate } = useRoute();
+  const { theme, toggleTheme } = useTheme();
   const [symbol, setSymbol] = useState('EURUSD');
   const [tf, setTf] = useState('H1');
   const [activeSignal, setActiveSignal] = useState<AISignal | null>(null);
   // señal cuyo análisis IA se está viendo en el modal
   const [analysisSignal, setAnalysisSignal] = useState<AISignal | null>(null);
-  // panel de administración (solo rol admin) en lugar del terminal
-  const [adminOpen, setAdminOpen] = useState(false);
+
+  // página de administración en /admin (solo rol admin)
+  const isAdmin = user.role === 'admin';
+  const adminOpen = path.startsWith('/admin');
+
+  // sin rol admin, /admin vuelve al terminal
+  useEffect(() => {
+    if (adminOpen && !isAdmin) navigate('/');
+  }, [adminOpen, isAdmin, navigate]);
 
   // catálogo de estrategias (una por detector del motor) con stats reales;
   // el interruptor de cada una decide qué señales se muestran en la UI
@@ -77,12 +88,15 @@ export default function App() {
     setActiveSignal(null);
   };
 
-  const isAdmin = user.role === 'admin';
-
   if (isAdmin && adminOpen) {
     return (
       <div className="app">
-        <TopBar adminOpen onToggleAdmin={() => setAdminOpen(false)} />
+        <TopBar
+          adminOpen
+          onToggleAdmin={() => navigate('/')}
+          theme={theme}
+          onToggleTheme={toggleTheme}
+        />
         <AdminDashboard />
       </div>
     );
@@ -92,11 +106,14 @@ export default function App() {
     <div className="app">
       <TopBar
         adminOpen={false}
-        onToggleAdmin={isAdmin ? () => setAdminOpen(true) : undefined}
+        onToggleAdmin={isAdmin ? () => navigate('/admin') : undefined}
+        theme={theme}
+        onToggleTheme={toggleTheme}
       />
       <main className="workspace">
         <Watchlist selected={symbol} onSelect={changeSymbol} />
         <ChartPanel
+          theme={theme}
           symbol={symbol}
           tf={tf}
           onTfChange={changeTf}

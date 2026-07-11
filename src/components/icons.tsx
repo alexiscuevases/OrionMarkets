@@ -137,3 +137,16 @@ export const ChevronDown = ({ size, ...p }: P) => (
     <path d="m4 6 4 4 4-4" />
   </svg>
 );
+
+export const SunIcon = ({ size, ...p }: P) => (
+  <svg {...base(size)} {...p}>
+    <circle cx="8" cy="8" r="3" />
+    <path d="M8 1.5v1.7M8 12.8v1.7M1.5 8h1.7M12.8 8h1.7M3.4 3.4l1.2 1.2M11.4 11.4l1.2 1.2M12.6 3.4l-1.2 1.2M4.6 11.4l-1.2 1.2" />
+  </svg>
+);
+
+export const MoonIcon = ({ size, ...p }: P) => (
+  <svg {...base(size)} {...p}>
+    <path d="M13.5 9.5A6 6 0 0 1 6.5 2.5a5.5 5.5 0 1 0 7 7Z" />
+  </svg>
+);

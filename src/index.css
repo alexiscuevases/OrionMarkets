@@ -49,6 +49,12 @@
   --series-3: #8b7cf6;
   --series-4: #d55181;
 
+  /* Texto de acento IA sobre superficies (más claro que --nebula en oscuro) */
+  --nebula-ink: #b9affb;
+
+  /* Barra superior y pestañas admin (translúcidas sobre el fondo) */
+  --bg-topbar: rgba(16, 21, 31, 0.6);
+
   /* Tipografía */
   --font-ui: 'Space Grotesk', system-ui, -apple-system, 'Segoe UI', sans-serif;
   --font-data: 'JetBrains Mono', ui-monospace, 'Cascadia Mono', Consolas, monospace;
@@ -58,6 +64,50 @@
   --r-md: 10px;
   --r-lg: 14px;
   --topbar-h: 54px;
+}
+
+/* ---------------- Tema claro ----------------
+   Se activa con data-theme="light" en <html> (src/theme.ts).
+   Mismos tokens, valores validados sobre blanco. */
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  --bg-void: #edf0f5;
+  --bg-panel: #ffffff;
+  --bg-raised: #f3f5f9;
+  --bg-inset: #e8ecf3;
+  --bg-hover: rgba(38, 55, 85, 0.06);
+  --bg-active: rgba(38, 55, 85, 0.12);
+
+  --line-hair: rgba(38, 55, 85, 0.14);
+  --line-strong: rgba(38, 55, 85, 0.26);
+  --line-grid: #dfe4ed;
+
+  --ink-hi: #16202f;
+  --ink-mid: #43506a;
+  --ink-low: #75819a;
+
+  --star: #a97605;
+  --star-dim: #8a6100;
+  --star-glow: rgba(169, 118, 5, 0.13);
+
+  --nebula: #6553e8;
+  --nebula-glow: rgba(101, 83, 232, 0.12);
+  --nebula-ink: #5646d6;
+
+  --buy: #1f9d55;
+  --buy-ink: #157a41;
+  --buy-glow: rgba(31, 157, 85, 0.12);
+  --sell: #d6484d;
+  --sell-ink: #c02f34;
+  --sell-glow: rgba(214, 72, 77, 0.11);
+
+  --series-1: #0f7fb5;
+  --series-2: #a97605;
+  --series-3: #6553e8;
+  --series-4: #c23a70;
+
+  --bg-topbar: rgba(255, 255, 255, 0.72);
 }
 
 * {

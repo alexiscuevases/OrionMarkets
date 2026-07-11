@@ -4,8 +4,15 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="color-scheme" content="dark" />
+    <meta name="color-scheme" content="dark light" />
     <title>Orion Markets — Terminal FX</title>
+    <!-- tema antes de cargar CSS/JS: evita el destello del tema contrario -->
+    <script>
+      try {
+        var t = localStorage.getItem('orion-theme');
+        if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+      } catch (e) { /* sin localStorage: tema oscuro por defecto */ }
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link

@@ -4,8 +4,9 @@ import 'highcharts/indicators/rsi';
 import 'highcharts/modules/accessibility';
 
 /* Tema Orion para Highcharts — espejo de los tokens de src/index.css.
-   Highcharts no lee variables CSS en cada render, así que los valores
-   viven aquí una sola vez. */
+   Highcharts no lee variables CSS por sí solo, así que los tokens se
+   copian aquí desde getComputedStyle; applyOrionTheme() se vuelve a
+   llamar al cambiar de tema (src/theme.ts) para refrescarlos. */
 
 export const ORION = {
   surface: '#10151f',
@@ -18,6 +19,7 @@ export const ORION = {
   inkLow: '#5c6880',
   star: '#f0b429',
   nebula: '#8b7cf6',
+  nebulaInk: '#b9affb',
   buy: '#2bab63',
   buyInk: '#4cc38a',
   sell: '#e5484d',
@@ -30,11 +32,39 @@ export const ORION = {
   fontData: "'JetBrains Mono', ui-monospace, monospace",
 };
 
-let applied = false;
+/** Token de ORION → variable CSS de la que se copia su valor. */
+const TOKEN_VARS: Record<string, string> = {
+  surface: '--bg-panel',
+  raised: '--bg-raised',
+  gridLine: '--line-grid',
+  hairline: '--line-hair',
+  strongLine: '--line-strong',
+  inkHi: '--ink-hi',
+  inkMid: '--ink-mid',
+  inkLow: '--ink-low',
+  star: '--star',
+  nebula: '--nebula',
+  nebulaInk: '--nebula-ink',
+  buy: '--buy',
+  buyInk: '--buy-ink',
+  sell: '--sell',
+  sellInk: '--sell-ink',
+  series1: '--series-1',
+  series2: '--series-2',
+  series3: '--series-3',
+  series4: '--series-4',
+};
+
+function readTokens(): void {
+  const style = getComputedStyle(document.documentElement);
+  for (const [token, cssVar] of Object.entries(TOKEN_VARS)) {
+    const value = style.getPropertyValue(cssVar).trim();
+    if (value) (ORION as Record<string, string>)[token] = value;
+  }
+}
 
 export function applyOrionTheme(): void {
-  if (applied) return;
-  applied = true;
+  readTokens();
 
   Highcharts.setOptions({
     lang: {

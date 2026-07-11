@@ -336,7 +336,7 @@ export function drawSmc(
         .add(over);
       r.label(`${up ? '↑' : '↓'} ${p.pips} pips`, Math.min(x2 + 6, right - 64), y2 - 9)
         .attr({ fill: ORION.raised, stroke: ORION.nebula, 'stroke-width': 1, r: 4, padding: 4 })
-        .css({ color: '#b9affb', fontSize: '9px', fontFamily: ORION.fontData })
+        .css({ color: ORION.nebulaInk, fontSize: '9px', fontFamily: ORION.fontData })
         .add(over);
     }
   }

@@ -5,12 +5,15 @@ import {
   type AISignal, type SeriesData,
 } from '../data/market';
 import { isLiveCapable } from '../data/live';
+import type { Theme } from '../theme';
 import MarketContextBar from './MarketContextBar';
 import {
   AreaIcon, BlocksIcon, CandlesIcon, LayersIcon, LineIcon, OhlcIcon, SparkleIcon, TargetIcon,
 } from './icons';
 
 interface Props {
+  /** Tema activo: fuerza el rebuild de Highcharts al cambiar. */
+  theme: Theme;
   symbol: string;
   tf: string;
   onTfChange: (tf: string) => void;
@@ -61,7 +64,7 @@ function matchesFilter(s: AISignal, f: SignalFilter): boolean {
 }
 
 export default function ChartPanel({
-  symbol, tf, onTfChange, activeSignal, onExitSignal, series, signals, live, loading, error,
+  theme, symbol, tf, onTfChange, activeSignal, onExitSignal, series, signals, live, loading, error,
 }: Props) {
   const [kind, setKind] = useState<ChartKind>('candlestick');
   const [showSignals, setShowSignals] = useState(true);
@@ -320,6 +323,7 @@ export default function ChartPanel({
       <div className="chart-body">
         {hasData ? (
           <MainChart
+            key={theme}
             symbol={symbol}
             tf={tf}
             kind={kind}
