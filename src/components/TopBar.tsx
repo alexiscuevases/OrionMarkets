@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useAuth } from '../auth/useAuth';
 import type { Theme } from '../theme';
 import { SESSIONS, isSessionOpen } from '../data/market';
 import { useEngineStatus } from '../hooks/useMarketData';
 import {
-  BellIcon, LogoutIcon, MoonIcon, OrionMark, ShieldIcon, SparkleIcon, SunIcon,
+  BellIcon, ChevronDown, LogoutIcon, MoonIcon, OrionMark, ShieldIcon, SparkleIcon, SunIcon,
 } from './icons';
 
 interface Props {
@@ -16,12 +16,13 @@ interface Props {
   onToggleTheme: () => void;
 }
 
-type Menu = 'bell' | 'user' | null;
+type Menu = 'sessions' | 'bell' | 'user' | null;
+
+const fmtUtcHour = (h: number) => `${String(h).padStart(2, '0')}:00`;
 
 export default function TopBar({ adminOpen, onToggleAdmin, theme, onToggleTheme }: Props) {
   const [now, setNow] = useState(() => new Date());
   const [menu, setMenu] = useState<Menu>(null);
-  const actionsRef = useRef<HTMLDivElement>(null);
   const engine = useEngineStatus();
   const { user, logout } = useAuth();
 
@@ -34,7 +35,8 @@ export default function TopBar({ adminOpen, onToggleAdmin, theme, onToggleTheme 
   useEffect(() => {
     if (!menu) return;
     const onPointerDown = (e: PointerEvent) => {
-      if (!actionsRef.current?.contains(e.target as Node)) setMenu(null);
+      const t = e.target as Element;
+      if (!t.closest('.dd')) setMenu(null);
     };
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setMenu(null);
@@ -49,6 +51,7 @@ export default function TopBar({ adminOpen, onToggleAdmin, theme, onToggleTheme 
 
   const utcHour = now.getUTCHours() + now.getUTCMinutes() / 60;
   const utc = now.toISOString().slice(11, 19);
+  const openCount = SESSIONS.filter((s) => isSessionOpen(s, utcHour)).length;
   const lastRun = engine.lastRun
     ? new Date(engine.lastRun).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })
     : null;
@@ -70,37 +73,55 @@ export default function TopBar({ adminOpen, onToggleAdmin, theme, onToggleTheme 
         </span>
       </div>
 
-      {/* Sesiones de mercado + reloj UTC en un solo panel */}
-      <div className="topbar__sessions">
-        {SESSIONS.map((s) => {
-          const open = isSessionOpen(s, utcHour);
-          return (
-            <div key={s.name} className={`session ${open ? 'session--open' : ''}`}>
-              <span className="session__dot" />
-              {s.name}
-            </div>
-          );
-        })}
-        <div className="topbar__clock num">{utc} UTC</div>
+      {/* Reloj UTC + sesiones de mercado, plegados en un desplegable */}
+      <div className="dd topbar__sessions">
+        <button
+          className={`sessions-btn ${menu === 'sessions' ? 'sessions-btn--on' : ''}`}
+          title="Sesiones de mercado"
+          aria-haspopup="menu"
+          aria-expanded={menu === 'sessions'}
+          onClick={() => toggle('sessions')}
+        >
+          <span className={`session__dot ${openCount > 0 ? 'session__dot--open' : ''}`} />
+          <span>{openCount} {openCount === 1 ? 'sesión' : 'sesiones'}</span>
+          <span className="sessions-btn__clock num">{utc} UTC</span>
+          <ChevronDown size={12} />
+        </button>
+        {menu === 'sessions' && (
+          <div className="dd__menu dd__menu--sessions" role="menu">
+            <div className="dd__head">Sesiones de mercado</div>
+            {SESSIONS.map((s) => {
+              const open = isSessionOpen(s, utcHour);
+              return (
+                <div key={s.name} className={`dd__session ${open ? 'dd__session--open' : ''}`}>
+                  <span className="session__dot" />
+                  <span className="dd__session-name">{s.name}</span>
+                  <span className="dd__session-hours num">
+                    {fmtUtcHour(s.openUtc)}–{fmtUtcHour(s.closeUtc)} UTC
+                  </span>
+                  <em>{open ? 'Abierta' : 'Cerrada'}</em>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
-      <div className="topbar__actions" ref={actionsRef}>
-        {user.role === 'admin' && onToggleAdmin && (
-          <button
-            className={`admin-pill ${adminOpen ? 'admin-pill--on' : ''}`}
-            title={adminOpen ? 'Volver al terminal' : 'Panel de administración'}
-            onClick={onToggleAdmin}
-          >
-            <ShieldIcon size={13} />
-            <span>Admin</span>
-          </button>
-        )}
-
+      <div className="topbar__actions">
         <div className="ai-pill">
           <SparkleIcon size={13} />
           <span>Orion AI</span>
           <span className="ai-pill__dot" />
         </div>
+
+        {/* Tema claro/oscuro */}
+        <button
+          className="icon-btn"
+          title={theme === 'dark' ? 'Tema claro' : 'Tema oscuro'}
+          onClick={onToggleTheme}
+        >
+          {theme === 'dark' ? <SunIcon size={15} /> : <MoonIcon size={15} />}
+        </button>
 
         {/* Notificaciones */}
         <div className="dd">
@@ -140,7 +161,7 @@ export default function TopBar({ adminOpen, onToggleAdmin, theme, onToggleTheme 
         {/* Cuenta */}
         <div className="dd">
           <button
-            className="avatar"
+            className={`avatar ${adminOpen ? 'avatar--admin' : ''}`}
             title={user.email}
             aria-haspopup="menu"
             aria-expanded={menu === 'user'}
@@ -154,10 +175,19 @@ export default function TopBar({ adminOpen, onToggleAdmin, theme, onToggleTheme 
                 {user.email}
                 <span className="dd__role">{user.role === 'admin' ? 'Administrador' : 'Usuario'}</span>
               </div>
-              <button className="dd__item" role="menuitem" onClick={onToggleTheme}>
-                {theme === 'dark' ? <SunIcon size={14} /> : <MoonIcon size={14} />}
-                {theme === 'dark' ? 'Tema claro' : 'Tema oscuro'}
-              </button>
+              {user.role === 'admin' && onToggleAdmin && (
+                <button
+                  className="dd__item"
+                  role="menuitem"
+                  onClick={() => {
+                    setMenu(null);
+                    onToggleAdmin();
+                  }}
+                >
+                  <ShieldIcon size={14} />
+                  {adminOpen ? 'Volver al terminal' : 'Panel de administración'}
+                </button>
+              )}
               <div className="dd__sep" />
               <button
                 className="dd__item dd__item--danger"
