@@ -21,7 +21,7 @@ export { OrionPipeline } from './workflow';
 
 /* Punto de entrada del Worker.
 
-   - scheduled: cron cada 15 min; salta el disparo si hay un pipeline en
+   - scheduled: cron cada 30 min; salta el disparo si hay un pipeline en
      curso (lock KV) para no competir por la cuota de Twelve Data.
    - fetch: API JSON. /api/auth/* gestiona usuarios y sesiones en D1;
      la API de lectura exige sesión iniciada (salvo /api/health) y lleva
@@ -29,10 +29,8 @@ export { OrionPipeline } from './workflow';
      ADMIN_API_KEY o sesión con rol admin (Fase 8 + auth). */
 
 const CRON_INTERVALS: Record<number, Interval[]> = {
-  0: ['1h'],
-  15: ['5min', '15min'],
-  30: ['30min'],
-  45: ['45min'],
+  0: ['1h', '45min'],
+  30: ['5min', '15min', '30min'],
 };
 
 /** Peticiones/min por IP para la API pública de lectura. */

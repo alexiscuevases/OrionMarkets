@@ -6,10 +6,11 @@
   "compatibility_date": "2026-06-01",
   "observability": { "enabled": true },
 
-  // Pipeline escalonado cada 15 min: cada disparo refresca solo los
-  // intervalos que le tocan (:00 → 1h, :15 → 5min+15min, :30 → 30min,
-  // :45 → 45min); ver CRON_INTERVALS en src/index.ts
-  "triggers": { "crons": ["0,15,30,45 * * * *"] },
+  // Pipeline escalonado cada 30 min: cada disparo refresca solo los
+  // intervalos que le tocan (:00 → 1h+45min, :30 → 5min+15min+30min);
+  // menos ejecuciones = menos sobrecoste de backfill por run en Twelve
+  // Data; ver CRON_INTERVALS en src/index.ts
+  "triggers": { "crons": ["0,30 * * * *"] },
 
   "workflows": [
     {
